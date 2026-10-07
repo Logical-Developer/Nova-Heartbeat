@@ -1,0 +1,18 @@
+{
+  "name": "nova-heartbeat",
+  "version": "0.0.1",
+  "description": "Nova Heartbeat — automated page rotation and construct-to-upgrade conversion",
+  "author": "Logical-Developer",
+  "license": "MIT",
+  "homepage": "https://github.com/Logical-Developer/Nova-Heartbeat",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Logical-Developer/Nova-Heartbeat.git"
+  },
+  "scripts": {
+    "build": "node build.js",
+    "watch": "node watch.js",
+    "check": "node --check Nova-Heartbeat.user.js",
+    "check:plugins": "node --check plugins/Nova-Builder/Nova-Builder.user.js"
+  }
+}

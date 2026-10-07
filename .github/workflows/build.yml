@@ -1,0 +1,45 @@
+name: Build & Commit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build.js'
+      - 'package.json'
+      - 'plugins/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Syntax-check external plugins
+        run: |
+          for f in plugins/*/*.user.js; do
+            [ -e "$f" ] || continue
+            node --check "$f"
+          done
+
+      - name: Build userscript
+        run: node build.js
+
+      - name: Commit built file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Nova-Heartbeat.user.js
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: auto-build Nova-Heartbeat.user.js [skip ci]"
+            git push
+          fi
