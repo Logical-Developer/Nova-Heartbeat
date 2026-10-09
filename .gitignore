@@ -1,11 +1,23 @@
+# Dependencies
 node_modules/
+
 *.log
+npm-debug.log*
 .env
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
 .vscode/
+.idea/
 
 # Local backups (not part of the build)
 backup/
 
 # Personal / local tooling (not shared)
 .clinerules
+
+# Private internal documentation (never uploaded)
+private-doc/
