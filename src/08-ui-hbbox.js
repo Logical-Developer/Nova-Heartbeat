@@ -256,8 +256,10 @@
     }
     const stateEl = box.querySelector('.nova-hb-state');
     const fi = freezeInfo();
+    const lock = checkPluginLock();
     const waitState = computeWaitState();
-    if (fi && !fi.expired && fi.reason) stateEl.innerHTML = `❄ <b>FROZEN</b> on ${esc(fi.reason)}`;
+    if (lock) stateEl.innerHTML = `🔒 <b>LOCKED</b> by ${esc(lock.label)} — rotation paused`;
+    else if (fi && !fi.expired && fi.reason) stateEl.innerHTML = `❄ <b>FROZEN</b> on ${esc(fi.reason)}`;
     else if (s.currentJob) {
       const el = ((n - (s.currentJob.stateAt || n)) / 1000).toFixed(1);
       let html = `🎯 <b>${esc(s.currentJob.plugin)}</b> → ${esc(s.currentJob.target.page)}@${esc(vLabel(s.currentJob.target.village))} · ${esc(s.currentJob.state)} · ${el}s`;
@@ -271,7 +273,11 @@
     const nextEl = box.querySelector('.nova-hb-next');
     const override = checkFreezeOverride();
 
-    if (override) {
+    if (lock) {
+      nextEl.className = 'nova-hb-next override';
+      nextEl.innerHTML = `🔒 Plugin Lock: ${esc(lock.label)}<br><span class="row2">${esc(lock.description || 'exclusive queue')} · rotation paused</span>`;
+    }
+    else if (override) {
       nextEl.className = 'nova-hb-next override';
       nextEl.innerHTML = `✅ Plugin Override: ${esc(override.pluginId)}<br><span class="row2">${esc(override.description || 'active')}</span>`;
     }
@@ -300,9 +306,11 @@
         others.sort((a,b) => (s.villages[a].lastSeen || 0) - (s.villages[b].lastSeen || 0));
         return others[0];
       })();
-      const rotLine = nextVid
+      const rotLine = (nextVid
         ? `⏱ next rotation → ${esc(vLabel(nextVid))} in ${fmtTimer(inMs)}`
-        : `⏱ next rotation in ${fmtTimer(inMs)}`;
+        : `⏱ next rotation in ${fmtTimer(inMs)}`) +
+        // ═══ 0.0.4: make it visible *why* a due rotation is not happening ═══
+        (s.currentJob && inMs === 0 ? ' · ⛔ blocked by job' : '');
       if (runnable) {
         const inMsT = Math.max(0, runnable.readyAt - n);
         nextEl.className = 'nova-hb-next ready';

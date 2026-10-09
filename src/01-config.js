@@ -2,7 +2,7 @@
 // 01-config.js
 // ═══════════════════════════════════════════════════════════
 
-  const VERSION = '0.0.1';
+  const VERSION = '0.0.4';
   const SK = 'travian_nova_hb_v1';
   const DEBUG_KEY = 'nova_debug';
   const MY_TAB = 'tab_' + Math.random().toString(36).slice(2, 8);
@@ -22,7 +22,10 @@
     LIMIT_BUILD_EXECUTING: 45000,
     LIMIT_BUILD_CONFIRMING: 15000,
     LIMIT_BUILD_CONFIRMING_VIDEO_WAIT: 90000,
-    LIMIT_BUILDING: 4 * 60 * 60 * 1000,
+    // ═════ 0.0.4: BUILDING must NOT own the queue until the build finishes ═════
+    // (a 2h upgrade used to block rotation + every other village for up to 4h)
+    BUILDING_HOLD_MS: 60 * 1000,
+    LIMIT_BUILDING: 10 * 60 * 1000,
     LIMIT_VERIFYING: 45000,
     RETRY_BACKOFF_MS: [4000, 10000, 25000],
     MAX_ATTEMPTS: 3,
@@ -76,6 +79,8 @@
       _unfreezeFallbackAt: 0,
       // ═════ 2.0.2.21 ═════
       _lastRotCheck: 0,
+      // ═════ 0.0.3: plugin-lock log dedupe ═════
+      _lastLockLog: null,
     },
     plugins: {}, ui: { panelOpen: false },
   };

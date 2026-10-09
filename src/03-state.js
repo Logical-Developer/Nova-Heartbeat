@@ -31,6 +31,7 @@
       if (typeof s.heartbeat.allowHiddenTab !== 'boolean') s.heartbeat.allowHiddenTab = false;
       if (s.heartbeat._unfreezeFallbackAt === undefined) s.heartbeat._unfreezeFallbackAt = 0;
       if (s.heartbeat._lastRotCheck === undefined) s.heartbeat._lastRotCheck = 0;
+      if (s.heartbeat._lastLockLog === undefined) s.heartbeat._lastLockLog = null;
       if (!s.plugins) s.plugins = {};
       if (!s.ui) s.ui = { ...DEF.ui };
       return s;

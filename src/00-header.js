@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Nova Heartbeat (v0.0.1)
+// @name         Nova Heartbeat (V 0.0.4)
 // @namespace    https://github.com/Logical-Developer/Nova-Heartbeat
-// @version      0.0.1
+// @version      0.0.4
 // @description  Nova Heartbeat — automated page rotation and construct-to-upgrade conversion
 // @author       Logical-Developer
 // @homepage     https://github.com/Logical-Developer/Nova-Heartbeat
@@ -20,7 +20,7 @@
   'use strict';
 
 // ═══════════════════════════════════════════════════════════
-// Nova Heartbeat v0.0.1
+// Nova Heartbeat v0.0.4
 // Modular source — see src/ folder
 // DO NOT EDIT THE BUILT FILE — edit src/ and run: node build.js
 // ═══════════════════════════════════════════════════════════

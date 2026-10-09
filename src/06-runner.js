@@ -70,12 +70,19 @@
   }
 
   // ═════ 2.0.2.21: pickRunnableTask — exempt rotation + Builder rotation + Builder ═════
+  // ═════ 0.0.2: filter by readyAt — a not-yet-due task must not block the queue ═════
   function pickRunnableTask() {
     const s = readState();
     const n = now();
+    // ═══ 0.0.3: plugin lock — while a plugin holds the queue, only its tasks run ═══
+    const lock = checkPluginLock();
     const candidates = s.tasks.filter(t => {
       if (t.expiresAt <= n) return false;
+      // ═══ 0.0.2 FIX: not due yet (readyAt) → skip it, never block the rest of the queue ═══
+      if (t.readyAt > n) return false;
       if (!isFlagActive(t.requiresFlag, s)) return false;
+      // ═══ 0.0.3: not owned by the lock holder → stay queued (no village switch) ═══
+      if (lock && !isTaskAllowedByLock(t, lock)) return false;
       // ═══ rotation tasks: never rejected based on busy ═══
       if (t.payload?.rotation) return true;
       // ═══ Builder tasks: they decide themselves ═══
@@ -91,10 +98,7 @@
       if (dt !== 0) return dt;
       return String(a.id).localeCompare(String(b.id));
     });
-    const first = candidates[0];
-    if (!first) return null;
-    if (first.readyAt > n) return null;
-    return first;
+    return candidates[0];
   }
 
 
@@ -171,6 +175,19 @@
   function rotationTick() {
     const s = readState();
     if (!s.heartbeat.enabled) return;
+    // ═══ 0.0.3: plugin lock — no scheduled/urgent visits while a plugin owns the queue ═══
+    const lock = checkPluginLock();
+    if (lock) {
+      if (s.heartbeat._lastLockLog !== lock.pluginId) {
+        log('rotation', `⏸ rotation paused — plugin lock: ${lock.label}`);
+        patch(st => { st.heartbeat._lastLockLog = lock.pluginId; });
+      }
+      if ((s.heartbeat.nextRotationAt || 0) < now() + 60 * 1000) {
+        patch(st => { st.heartbeat.nextRotationAt = now() + 60 * 1000; });
+      }
+      return;
+    }
+    if (s.heartbeat._lastLockLog) patch(st => { st.heartbeat._lastLockLog = null; });
     const vids = Object.keys(s.villages).sort((a,b) => Number(a)-Number(b));
     if (vids.length < 2) return;
     if (s.currentJob) return;
@@ -639,8 +656,22 @@
 
       case 'BUILDING': {
         captureCurrentVillage();
-        if (job.buildEndsAt && now() >= job.buildEndsAt) {
+        // ═══ 0.0.4 FIX: BUILDING used to hold the queue until the build finished ═══
+        // (buildEndsAt = build end + 5s, up to LIMIT_BUILDING = 4h). While a job
+        // exists, pickNextJob() returns early and rotationTick() returns at
+        // `if (s.currentJob) return;` — so a single 2h upgrade blocked rotation and
+        // every other village's queued work, and the box showed
+        // "next rotation → V0x in 0s" forever.
+        // Now the job releases the queue after BUILDING_HOLD_MS (or sooner if the
+        // build already ended) and verifies the item instead of waiting it out.
+        const holdUntil = (job.stateAt || now()) + CFG.BUILDING_HOLD_MS;
+        if (job.buildEndsAt && now() >= job.buildEndsAt && job.buildEndsAt <= holdUntil) {
           log('runner', `⏱ build ends → verify`);
+          setJobState(job.id, 'VERIFYING');
+          return true;
+        }
+        if (now() >= holdUntil) {
+          log('runner', `✓ build queued — releasing queue after ${Math.round(CFG.BUILDING_HOLD_MS/1000)}s → verify`);
           setJobState(job.id, 'VERIFYING');
           return true;
         }
