@@ -1,6 +1,6 @@
 {
   "name": "nova-heartbeat",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "Nova Heartbeat — automated page rotation and construct-to-upgrade conversion",
   "author": "Logical-Developer",
   "license": "MIT",
@@ -11,8 +11,10 @@
   },
   "scripts": {
     "build": "node build.js",
+    "build:fm": "node plugins/FarmManager/build.js",
+    "build:ara": "node plugins/AttackReportAnalyzer/build.js",
     "watch": "node watch.js",
     "check": "node --check Nova-Heartbeat.user.js",
-    "check:plugins": "node --check plugins/Nova-Builder/Nova-Builder.user.js"
+    "check:plugins": "node --check plugins/Nova-Builder/Nova-Builder.user.js && node --check plugins/FarmManager/FarmManager.user.js && node --check plugins/AttackReportAnalyzer/AttackReportAnalyzer.user.js"
   }
 }
