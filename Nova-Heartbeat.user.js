@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════
 // ⚠ AUTO-GENERATED FILE — DO NOT EDIT DIRECTLY
-// Generated: 2026-10-07T23:07:03.213Z
+// Generated: 2026-10-09T18:59:37.944Z
 // Source: src/
 // Rebuild: node build.js
 // ═══════════════════════════════════════════════════════════
@@ -10,9 +10,9 @@
 // ═══════════════════════════════════════════════════════════
 
 // ==UserScript==
-// @name         Nova Heartbeat (v0.0.1)
+// @name         Nova Heartbeat (V 0.0.4)
 // @namespace    https://github.com/Logical-Developer/Nova-Heartbeat
-// @version      0.0.1
+// @version      0.0.4
 // @description  Nova Heartbeat — automated page rotation and construct-to-upgrade conversion
 // @author       Logical-Developer
 // @homepage     https://github.com/Logical-Developer/Nova-Heartbeat
@@ -31,20 +31,20 @@
   'use strict';
 
 // ═══════════════════════════════════════════════════════════
-// Nova Heartbeat v0.0.1
+// Nova Heartbeat v0.0.4
 // Modular source — see src/ folder
 // DO NOT EDIT THE BUILT FILE — edit src/ and run: node build.js
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 01-config.js (82 lines)
+// FILE: 01-config.js (87 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
 // 01-config.js
 // ═══════════════════════════════════════════════════════════
 
-  const VERSION = '0.0.1';
+  const VERSION = '0.0.4';
   const SK = 'travian_nova_hb_v1';
   const DEBUG_KEY = 'nova_debug';
   const MY_TAB = 'tab_' + Math.random().toString(36).slice(2, 8);
@@ -64,7 +64,10 @@
     LIMIT_BUILD_EXECUTING: 45000,
     LIMIT_BUILD_CONFIRMING: 15000,
     LIMIT_BUILD_CONFIRMING_VIDEO_WAIT: 90000,
-    LIMIT_BUILDING: 4 * 60 * 60 * 1000,
+    // ═════ 0.0.4: BUILDING must NOT own the queue until the build finishes ═════
+    // (a 2h upgrade used to block rotation + every other village for up to 4h)
+    BUILDING_HOLD_MS: 60 * 1000,
+    LIMIT_BUILDING: 10 * 60 * 1000,
     LIMIT_VERIFYING: 45000,
     RETRY_BACKOFF_MS: [4000, 10000, 25000],
     MAX_ATTEMPTS: 3,
@@ -118,6 +121,8 @@
       _unfreezeFallbackAt: 0,
       // ═════ 2.0.2.21 ═════
       _lastRotCheck: 0,
+      // ═════ 0.0.3: plugin-lock log dedupe ═════
+      _lastLockLog: null,
     },
     plugins: {}, ui: { panelOpen: false },
   };
@@ -185,7 +190,7 @@
   }
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 03-state.js (288 lines)
+// FILE: 03-state.js (289 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
@@ -221,6 +226,7 @@
       if (typeof s.heartbeat.allowHiddenTab !== 'boolean') s.heartbeat.allowHiddenTab = false;
       if (s.heartbeat._unfreezeFallbackAt === undefined) s.heartbeat._unfreezeFallbackAt = 0;
       if (s.heartbeat._lastRotCheck === undefined) s.heartbeat._lastRotCheck = 0;
+      if (s.heartbeat._lastLockLog === undefined) s.heartbeat._lastLockLog = null;
       if (!s.plugins) s.plugins = {};
       if (!s.ui) s.ui = { ...DEF.ui };
       return s;
@@ -807,7 +813,7 @@
 
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 06-runner.js (878 lines)
+// FILE: 06-runner.js (909 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
@@ -882,12 +888,19 @@
   }
 
   // ═════ 2.0.2.21: pickRunnableTask — exempt rotation + Builder rotation + Builder ═════
+  // ═════ 0.0.2: filter by readyAt — a not-yet-due task must not block the queue ═════
   function pickRunnableTask() {
     const s = readState();
     const n = now();
+    // ═══ 0.0.3: plugin lock — while a plugin holds the queue, only its tasks run ═══
+    const lock = checkPluginLock();
     const candidates = s.tasks.filter(t => {
       if (t.expiresAt <= n) return false;
+      // ═══ 0.0.2 FIX: not due yet (readyAt) → skip it, never block the rest of the queue ═══
+      if (t.readyAt > n) return false;
       if (!isFlagActive(t.requiresFlag, s)) return false;
+      // ═══ 0.0.3: not owned by the lock holder → stay queued (no village switch) ═══
+      if (lock && !isTaskAllowedByLock(t, lock)) return false;
       // ═══ rotation tasks: never rejected based on busy ═══
       if (t.payload?.rotation) return true;
       // ═══ Builder tasks: they decide themselves ═══
@@ -903,10 +916,7 @@
       if (dt !== 0) return dt;
       return String(a.id).localeCompare(String(b.id));
     });
-    const first = candidates[0];
-    if (!first) return null;
-    if (first.readyAt > n) return null;
-    return first;
+    return candidates[0];
   }
 
 
@@ -983,6 +993,19 @@
   function rotationTick() {
     const s = readState();
     if (!s.heartbeat.enabled) return;
+    // ═══ 0.0.3: plugin lock — no scheduled/urgent visits while a plugin owns the queue ═══
+    const lock = checkPluginLock();
+    if (lock) {
+      if (s.heartbeat._lastLockLog !== lock.pluginId) {
+        log('rotation', `⏸ rotation paused — plugin lock: ${lock.label}`);
+        patch(st => { st.heartbeat._lastLockLog = lock.pluginId; });
+      }
+      if ((s.heartbeat.nextRotationAt || 0) < now() + 60 * 1000) {
+        patch(st => { st.heartbeat.nextRotationAt = now() + 60 * 1000; });
+      }
+      return;
+    }
+    if (s.heartbeat._lastLockLog) patch(st => { st.heartbeat._lastLockLog = null; });
     const vids = Object.keys(s.villages).sort((a,b) => Number(a)-Number(b));
     if (vids.length < 2) return;
     if (s.currentJob) return;
@@ -1451,8 +1474,22 @@
 
       case 'BUILDING': {
         captureCurrentVillage();
-        if (job.buildEndsAt && now() >= job.buildEndsAt) {
+        // ═══ 0.0.4 FIX: BUILDING used to hold the queue until the build finished ═══
+        // (buildEndsAt = build end + 5s, up to LIMIT_BUILDING = 4h). While a job
+        // exists, pickNextJob() returns early and rotationTick() returns at
+        // `if (s.currentJob) return;` — so a single 2h upgrade blocked rotation and
+        // every other village's queued work, and the box showed
+        // "next rotation → V0x in 0s" forever.
+        // Now the job releases the queue after BUILDING_HOLD_MS (or sooner if the
+        // build already ended) and verifies the item instead of waiting it out.
+        const holdUntil = (job.stateAt || now()) + CFG.BUILDING_HOLD_MS;
+        if (job.buildEndsAt && now() >= job.buildEndsAt && job.buildEndsAt <= holdUntil) {
           log('runner', `⏱ build ends → verify`);
+          setJobState(job.id, 'VERIFYING');
+          return true;
+        }
+        if (now() >= holdUntil) {
+          log('runner', `✓ build queued — releasing queue after ${Math.round(CFG.BUILDING_HOLD_MS/1000)}s → verify`);
           setJobState(job.id, 'VERIFYING');
           return true;
         }
@@ -1689,7 +1726,7 @@
 
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 07-plugins-api.js (117 lines)
+// FILE: 07-plugins-api.js (172 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
@@ -1748,6 +1785,61 @@
       }
     }
     return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 0.0.3: PLUGIN LOCK — a plugin can claim exclusive control of
+  // the task queue while its condition returns true.
+  //   • no rotation / no urgent village visits
+  //   • only tasks accepted by `ownsTask` are picked
+  // Additive API — plugins that never register a lock are unaffected.
+  // ═══════════════════════════════════════════════════════════
+  const _pluginLocks = new Map();
+
+  function registerPluginLock(pluginId, opts) {
+    if (!pluginId || !opts || typeof opts.active !== 'function') {
+      console.error('[NovaHB] registerPluginLock: invalid args (need { active })');
+      return false;
+    }
+    _pluginLocks.set(pluginId, {
+      active: opts.active,
+      ownsTask: typeof opts.ownsTask === 'function' ? opts.ownsTask : null,
+      label: opts.label || pluginId,
+      description: opts.description || '',
+    });
+    log('sys', `plugin-lock registered: ${pluginId} (${opts.description || 'no-desc'})`);
+    return true;
+  }
+  function unregisterPluginLock(pluginId) {
+    const had = _pluginLocks.delete(pluginId);
+    if (had) log('sys', `plugin-lock unregistered: ${pluginId}`);
+    return had;
+  }
+  function listPluginLocks() {
+    return Array.from(_pluginLocks.entries()).map(([id, cfg]) => ({
+      id,
+      label: cfg.label,
+      description: cfg.description,
+    }));
+  }
+  function checkPluginLock() {
+    for (const [pluginId, cfg] of _pluginLocks.entries()) {
+      try {
+        if (cfg.active() === true) {
+          return { pluginId, label: cfg.label, description: cfg.description, ownsTask: cfg.ownsTask };
+        }
+      } catch (e) {
+        console.error(`[NovaHB] plugin-lock ${pluginId} threw:`, e);
+      }
+    }
+    return null;
+  }
+  function isTaskAllowedByLock(task, lock) {
+    if (!lock) return true;
+    if (lock.ownsTask) {
+      try { return lock.ownsTask(task) === true; } catch (e) { return false; }
+    }
+    return task.plugin === lock.pluginId;
   }
 
   function computeFreezeState() {
@@ -1810,7 +1902,7 @@
 
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 08-ui-hbbox.js (318 lines)
+// FILE: 08-ui-hbbox.js (326 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
@@ -2071,8 +2163,10 @@
     }
     const stateEl = box.querySelector('.nova-hb-state');
     const fi = freezeInfo();
+    const lock = checkPluginLock();
     const waitState = computeWaitState();
-    if (fi && !fi.expired && fi.reason) stateEl.innerHTML = `❄ <b>FROZEN</b> on ${esc(fi.reason)}`;
+    if (lock) stateEl.innerHTML = `🔒 <b>LOCKED</b> by ${esc(lock.label)} — rotation paused`;
+    else if (fi && !fi.expired && fi.reason) stateEl.innerHTML = `❄ <b>FROZEN</b> on ${esc(fi.reason)}`;
     else if (s.currentJob) {
       const el = ((n - (s.currentJob.stateAt || n)) / 1000).toFixed(1);
       let html = `🎯 <b>${esc(s.currentJob.plugin)}</b> → ${esc(s.currentJob.target.page)}@${esc(vLabel(s.currentJob.target.village))} · ${esc(s.currentJob.state)} · ${el}s`;
@@ -2086,7 +2180,11 @@
     const nextEl = box.querySelector('.nova-hb-next');
     const override = checkFreezeOverride();
 
-    if (override) {
+    if (lock) {
+      nextEl.className = 'nova-hb-next override';
+      nextEl.innerHTML = `🔒 Plugin Lock: ${esc(lock.label)}<br><span class="row2">${esc(lock.description || 'exclusive queue')} · rotation paused</span>`;
+    }
+    else if (override) {
       nextEl.className = 'nova-hb-next override';
       nextEl.innerHTML = `✅ Plugin Override: ${esc(override.pluginId)}<br><span class="row2">${esc(override.description || 'active')}</span>`;
     }
@@ -2115,9 +2213,11 @@
         others.sort((a,b) => (s.villages[a].lastSeen || 0) - (s.villages[b].lastSeen || 0));
         return others[0];
       })();
-      const rotLine = nextVid
+      const rotLine = (nextVid
         ? `⏱ next rotation → ${esc(vLabel(nextVid))} in ${fmtTimer(inMs)}`
-        : `⏱ next rotation in ${fmtTimer(inMs)}`;
+        : `⏱ next rotation in ${fmtTimer(inMs)}`) +
+        // ═══ 0.0.4: make it visible *why* a due rotation is not happening ═══
+        (s.currentJob && inMs === 0 ? ' · ⛔ blocked by job' : '');
       if (runnable) {
         const inMsT = Math.max(0, runnable.readyAt - n);
         nextEl.className = 'nova-hb-next ready';
@@ -2376,7 +2476,7 @@
 
 
 // ═══════════════════════════════════════════════════════════
-// FILE: 11-api.js (56 lines)
+// FILE: 11-api.js (63 lines)
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
@@ -2412,6 +2512,13 @@
       unregister: unregisterFreezeOverride,
       list: listFreezeOverrides,
       check: checkFreezeOverride,
+    },
+    // ═══ 0.0.3: exclusive queue ownership (no rotation, only owner tasks) ═══
+    pluginLock: {
+      register: registerPluginLock,
+      unregister: unregisterPluginLock,
+      list: listPluginLocks,
+      check: checkPluginLock,
     },
     tests: {
       register: (id, cfg) => registerDebugTab(id, cfg),

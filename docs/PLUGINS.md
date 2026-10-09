@@ -119,6 +119,16 @@ HUB_NAVIGATING → HUB_VISITING → HUB_DECIDING → BUILD_NAVIGATING
 The `Heartbeat` plugin uses a **legacy** flow instead: `NAVIGATING → EXECUTING`
 (see `advanceJobLegacy`). New plugins should use the modern flow.
 
+> **`BUILDING` holds the queue for at most `CFG.BUILDING_HOLD_MS` (60 s)** — not for
+> the whole build (Nova 0.0.4). While any `currentJob` exists, `pickNextJob()` and
+> `rotationTick()` both return early, so waiting out a 2 h upgrade used to block
+> rotation *and* every other village's queued work. The job now moves to
+> `VERIFYING` after the hold (or as soon as the build ends) and releases the queue.
+> Do **not** rely on `BUILDING` as a long-lived state; track your own build state
+> inside `state.plugins[<id>]` (see how Builder does it with `buildEndsAt`).
+> When rotation is due but a job is holding the queue, the Heartbeat box shows
+> `⛔ blocked by job`.
+
 ### Flags (`requiresFlag`)
 `isFlagActive(flag, state)` understands:
 - `'heartbeat'`                → `state.heartbeat.enabled === true`
@@ -175,6 +185,49 @@ window.TC.registerPlugin('MyExt', { async onArrive(ctx) { /* … */ } });
 ```
 This works because `window.TC` is set in `src/11-api.js`.
 See [EXTERNAL-PLUGINS.md](./EXTERNAL-PLUGINS.md) for the full external-plugin guide (reference implementation: Nova Builder).
+
+---
+
+## 5b. Exclusive queue ownership — `TC.pluginLock` (Nova 0.0.3+)
+
+Some plugins must be the **only** thing Nova does while they work (e.g. Farm Manager
+farming a specific village: a rotation or an *urgent visit* in the middle of the run
+would navigate away). For that, a plugin claims the queue:
+
+```js
+TC.pluginLock.register('FarmManager', {
+  active: () => isFarmRunActive(),          // lock engaged while true
+  ownsTask: (t) => !!t.payload?.farm,       // only these tasks may be picked
+  label: 'Farm Manager',                    // shown in the Heartbeat box
+  description: 'farm run in progress',
+});
+```
+
+While `active()` returns `true`:
+
+- `rotationTick()` is suppressed — no scheduled rotation and no *urgent visit*
+  (the urgent branch used to enqueue `priority: 10` and ignore `nextRotationAt`);
+  `nextRotationAt` is pushed 60 s forward so rotation does not fire right after release.
+- `pickRunnableTask()` only returns tasks accepted by `ownsTask`
+  (default: `t.plugin === pluginId`). Other tasks are **not** cancelled — they stay
+  queued and run as soon as the lock is released.
+- The Heartbeat box shows `🔒 LOCKED by <label>`.
+
+Other members:
+
+```js
+TC.pluginLock.unregister('FarmManager');   // release + remove
+TC.pluginLock.list();                      // [{ id, label, description }]
+TC.pluginLock.check();                     // { pluginId, label, description, ownsTask } | null
+```
+
+Notes:
+
+- **Additive**: plugins that never register a lock behave exactly as before.
+- `active()` is called on every tick (~1.5 s) — keep it cheap (cache if it reads storage).
+- A lock does **not** replace the freeze system. `TC.freezeOverride` still decides whether
+  a freeze page (map / market / war room) may be worked on; the lock decides *what the
+  runner may pick* and *whether rotation runs*.
 
 ---
 

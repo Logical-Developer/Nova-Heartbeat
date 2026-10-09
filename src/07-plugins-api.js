@@ -56,6 +56,61 @@
     return null;
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 0.0.3: PLUGIN LOCK — a plugin can claim exclusive control of
+  // the task queue while its condition returns true.
+  //   • no rotation / no urgent village visits
+  //   • only tasks accepted by `ownsTask` are picked
+  // Additive API — plugins that never register a lock are unaffected.
+  // ═══════════════════════════════════════════════════════════
+  const _pluginLocks = new Map();
+
+  function registerPluginLock(pluginId, opts) {
+    if (!pluginId || !opts || typeof opts.active !== 'function') {
+      console.error('[NovaHB] registerPluginLock: invalid args (need { active })');
+      return false;
+    }
+    _pluginLocks.set(pluginId, {
+      active: opts.active,
+      ownsTask: typeof opts.ownsTask === 'function' ? opts.ownsTask : null,
+      label: opts.label || pluginId,
+      description: opts.description || '',
+    });
+    log('sys', `plugin-lock registered: ${pluginId} (${opts.description || 'no-desc'})`);
+    return true;
+  }
+  function unregisterPluginLock(pluginId) {
+    const had = _pluginLocks.delete(pluginId);
+    if (had) log('sys', `plugin-lock unregistered: ${pluginId}`);
+    return had;
+  }
+  function listPluginLocks() {
+    return Array.from(_pluginLocks.entries()).map(([id, cfg]) => ({
+      id,
+      label: cfg.label,
+      description: cfg.description,
+    }));
+  }
+  function checkPluginLock() {
+    for (const [pluginId, cfg] of _pluginLocks.entries()) {
+      try {
+        if (cfg.active() === true) {
+          return { pluginId, label: cfg.label, description: cfg.description, ownsTask: cfg.ownsTask };
+        }
+      } catch (e) {
+        console.error(`[NovaHB] plugin-lock ${pluginId} threw:`, e);
+      }
+    }
+    return null;
+  }
+  function isTaskAllowedByLock(task, lock) {
+    if (!lock) return true;
+    if (lock.ownsTask) {
+      try { return lock.ownsTask(task) === true; } catch (e) { return false; }
+    }
+    return task.plugin === lock.pluginId;
+  }
+
   function computeFreezeState() {
     const pt = pageType();
     const u = new URL(location.href);

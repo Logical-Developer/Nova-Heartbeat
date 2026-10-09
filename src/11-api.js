@@ -32,6 +32,13 @@
       list: listFreezeOverrides,
       check: checkFreezeOverride,
     },
+    // ═══ 0.0.3: exclusive queue ownership (no rotation, only owner tasks) ═══
+    pluginLock: {
+      register: registerPluginLock,
+      unregister: unregisterPluginLock,
+      list: listPluginLocks,
+      check: checkPluginLock,
+    },
     tests: {
       register: (id, cfg) => registerDebugTab(id, cfg),
       panel: () => document.getElementById('tcTestPanel'),
