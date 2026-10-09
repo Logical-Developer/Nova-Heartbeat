@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Nova Builder
-// @version      2.0.3.15
+// @name         Nova Builder (V 2.0.3.16)
+// @version      2.0.3.16
 // @namespace    https://github.com/Logical-Developer/Nova-Heartbeat
 // @description  Nova Builder — external plugin for Nova-Heartbeat (construct-to-upgrade via h1 title check)
 // @author       Logical-Developer
@@ -16,7 +16,7 @@
 
 (function () {
   'use strict';
-  const VERSION = 'Nova-Builder-2.0.3.15';
+  const VERSION = 'Nova-Builder-2.0.3.16';
   const PLUGIN_ID = 'Builder';
   const DEBUG_KEY = 'nova_debug';
 
@@ -43,6 +43,8 @@
     AUTO_DONE_TIMEOUT_MS: 30 * 1000,
     AUTO_CONFIRM_TIMEOUT_MS: 15 * 1000,
     DISABLED_CLEAR_MS: 6 * 60 * 60 * 1000,
+    // ⭐ 2.0.3.16: BUILDING یتیم — اگر زمان پایان ساخت گذشته و دادهٔ صف کهنه است
+    BUILDING_STALE_DONE_MS: 10 * 60 * 1000,
     TAB_CLICK_SETTLE_MS: 800,
     TAB_URL_FORCE_WAIT_MS: 3000,
     VIDEO_PLAYING_WAIT_MS: 30 * 1000,
@@ -1290,6 +1292,22 @@
             it.stateAt = now_;
             it.finalLevel = it.targetLevel;
           }
+        }
+
+        // ⭐ 2.0.3.16: فالبک آیتم BUILDING یتیم. اگر دهکده برای مدت طولانی
+        // بازدید نشود، buildQueue کهنه می‌شود (bqFresh=false) و آیتم تا ابد در
+        // حالت BUILDING می‌ماند: پنل ساخت را «در حال ساخت» نشان می‌دهد و
+        // maybeReturnToHubWhenIdle هرگز اجرا نمی‌شود (queue.length > 0).
+        if (
+          it.state === 'BUILDING' &&
+          !bqFresh &&
+          it.buildEndsAt &&
+          (now_ - it.buildEndsAt) > CFG.BUILDING_STALE_DONE_MS
+        ) {
+          log(`✓ stale BUILDING → DONE: ${it.name} L${it.targetLevel} (buildEndsAt passed, queue data stale)`);
+          it.state = 'DONE';
+          it.stateAt = now_;
+          it.finalLevel = it.targetLevel;
         }
 
         if (it.state === 'CONFIRMING' && bqFresh && bq !== null) {
