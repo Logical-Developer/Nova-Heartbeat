@@ -44,8 +44,29 @@ public `window.TC` API.
 ## Versioning
 
 - The version lives in the `@version` header (used by Tampermonkey for updates)
-  and in the internal `VERSION` constant (used in log output).
+  and in the internal `VERSION` constant (used in log output). The `@name` also
+  ends with the version: `Nova Builder (V 2.0.3.16)`.
 - Updates independently of the core via `@updateURL` / `@downloadURL`.
+
+## Changelog
+
+### 2.0.3.16 — 2026-10-09
+
+- **Orphaned `BUILDING` item fallback** (`onTick`): if the item's `buildEndsAt`
+  has passed and the village's `buildQueue` data is stale (`bqFresh === false`,
+  i.e. the village has not been visited for a while), the item is marked `DONE`.
+  Without it a phantom "🔨 building…" stayed in the box forever and
+  `maybeReturnToHubWhenIdle()` never ran (`queue.length > 0`).
+  New constant `CFG.BUILDING_STALE_DONE_MS = 10 min`.
+- Version added to `@name` (`Nova Builder (V 2.0.3.16)`).
+- Pairs with **Nova core 0.0.4**, which no longer lets a `BUILDING` job hold the
+  runner queue until the build finishes (that was the reason a build in one
+  village stopped the queue from moving on to the next village).
+
+### 2.0.3.15
+
+- `isOwned` improvements via `slotId`; builder box/queue sync fixes.
+
 
 ## See also
 
