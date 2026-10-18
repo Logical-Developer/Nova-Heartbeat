@@ -1,5 +1,59 @@
 # Changelog — Nova Attack Report Analyzer
 
+## [1.6.2] — 2026-10-18
+
+### Added
+
+- **Target-village alliance.** The alliance of the *defended* village is now
+  extracted from the map detail page (`/karte.php?d=<id>` →
+  `#tileDetails` / `#map_details`) and shown as a new **Alliance** column between
+  *Tribe* and *Player*.
+  - `src/shared/03-map.js` → `_sharedParseMapDetail()` gained an `alliance` field
+    with two extraction paths: the `Alliance` label row (link text preferred) and,
+    as a fallback, any `a[href*="/alliance/"]` inside the tile details. Dash
+    placeholders (`-`, `—`) are ignored, bidi marks are stripped.
+  - `_sharedFetchVillageInfo()` cache-hit condition now also requires the
+    `alliance` key, and the iframe fallback merges `alliance`.
+  - **This is the target's alliance, never the attacker's.** `d.alliance`
+    (attacker side, filled from the report list) is deliberately *not* used;
+    `targetAllianceOf()` reads `d.mapAlliance` first and `d.defender.alliance`
+    second.
+- **Alliance filter.** A checkbox list of every alliance found among the target
+  villages, above the existing Normal Farms / Oases / Natars tabs, with **All**
+  and **Invert** buttons. The selection applies to the table *and* to every
+  export (analytical JSON + farm list).
+- **Attacker filter.** The same checkbox UI for the players who launched the
+  reports. A village attacked by several players survives only if at least one
+  of the remaining attackers is still selected (the filter runs on raw results,
+  before aggregation).
+- **Sortable columns.** Every header (`Village`, `Coord`, `Dist`, `Loot`,
+  `Tribe`, `Alliance`, `Player`) toggles asc/desc via `data-sort`; the active
+  column shows ▲ / ▼.
+- New export metadata: `meta.allianceFilter`, `meta.attackerFilter`,
+  `meta.sort`. Every exported entry now carries `alliance`.
+
+### Changed
+
+- Filter and sort preferences persist per mode in `localStorage`
+  (`nova_ara_alliance_ally_filter`, `nova_ara_alliance_attacker_filter`,
+  `nova_ara_alliance_sort` — and the `_own_` equivalents).
+- `coordsCacheKey` bumped (`nova_ara_alliance_coords_v5 → v6`,
+  `nova_ara_own_coords_v1 → v2`) so previously cached villages without the
+  alliance field are re-fetched. The results cache key (`storageKey`) is
+  unchanged.
+- `_sharedAggregateByVillage` output is stamped with `mapAlliance` / `alliance`
+  in `03-scan.js` (`stampAlliance`) — the shared aggregator itself is untouched.
+- `filter options` are rebuilt after a scan **and** when loading from cache.
+
+### Unchanged by design (zero regression)
+
+- Distance sort ascending remains the default, and exports are still ordered by
+  distance regardless of the on-screen sort.
+- Empty selection = no filter; a fully-checked list = no filter. Removing every
+  checkbox therefore does **not** empty the table — use **Invert** to see the
+  inverse set.
+- `maxDistance` default stays `0` (no limit).
+
 ## [1.6.1] — 2026-10-09
 
 ### Fixed

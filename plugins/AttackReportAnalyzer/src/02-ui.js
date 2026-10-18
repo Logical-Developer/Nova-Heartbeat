@@ -138,6 +138,44 @@
                 background:#3a4a80; color:#fff; padding:2px 8px;
                 border-radius:3px; min-width:44px; text-align:center;
             }
+            #nova-ara-a-box .nova-filter-title {
+                font-weight: bold; color: #2a4a70; font-size: 12px;
+                margin-bottom: 6px;
+            }
+            #nova-ara-a-box .nova-mini-btn {
+                font-size: 10px; padding: 3px 8px;
+                border: 1px solid #8a9ac0; background: #e0e8f0;
+                border-radius: 3px; cursor: pointer; color: #1a2050;
+                font-family: Verdana, sans-serif; font-weight: bold;
+            }
+            #nova-ara-a-box .nova-mini-btn:hover { background: #d0dae8; }
+            #nova-ara-a-box .nova-ally-tag {
+                display: inline-block; background: rgba(150,120,200,.3);
+                color: #3a1a6a; padding: 1px 5px; border-radius: 3px;
+                font-size: 9px; font-weight: bold; max-width: 110px;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                vertical-align: middle;
+            }
+            #nova-ara-a-box table.nova-table th[data-sort] { cursor: pointer; user-select: none; }
+            #nova-ara-a-box table.nova-table th[data-sort]:hover { background: #6a7eb4; }
+            #nova-ara-a-box table.nova-table th[data-sort] .sort-ind {
+                font-size: 9px; opacity: .85; margin-left: 2px;
+            }
+            #nova-ara-a-box .nova-filter-list {
+                display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px;
+                max-height: 110px; overflow-y: auto;
+            }
+            #nova-ara-a-box .nova-filter-list label {
+                display: inline-flex; align-items: center; gap: 4px;
+                cursor: pointer; user-select: none; font-weight: normal;
+                color: #1a2050; font-size: 11px;
+            }
+            #nova-ara-a-box .nova-filter-list input[type="checkbox"] {
+                cursor: pointer; width: 14px; height: 14px;
+            }
+            #nova-ara-a-box .nova-filter-hint {
+                margin-top: 6px; font-size: 10px; color: #5a6a80;
+            }
         `;
         document.head.appendChild(st);
     }
@@ -236,6 +274,34 @@
                     <span id="nova-ara-a-dist-slider-val" class="nova-val-badge">200</span>
                     <span style="font-size:10px;color:${THEME.textMuted};font-weight:normal;">(0 = no limit, else ≤ N fields)</span>
                 </label>
+            </div>
+
+            <div class="nova-section" id="nova-ally-filter-wrap">
+                <div class="nova-filter-title">🏰 Alliance Filter <span style="font-weight:normal;font-size:10px;color:${THEME.textMuted};">(target village alliance)</span></div>
+                <div id="nova-ally-filter-list" class="nova-filter-list">
+                    <span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>
+                </div>
+                <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="nova-ally-all" class="nova-mini-btn">All</button>
+                    <button type="button" id="nova-ally-invert" class="nova-mini-btn">Invert</button>
+                </div>
+                <div class="nova-filter-hint">
+                    No alliance checked → all included. Some checked → only those are shown.
+                </div>
+            </div>
+
+            <div class="nova-section" id="nova-atk-filter-wrap">
+                <div class="nova-filter-title">⚔️ Attacker Filter</div>
+                <div id="nova-atk-filter-list" class="nova-filter-list">
+                    <span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>
+                </div>
+                <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="nova-atk-all" class="nova-mini-btn">All</button>
+                    <button type="button" id="nova-atk-invert" class="nova-mini-btn">Invert</button>
+                </div>
+                <div class="nova-filter-hint">
+                    Same rule as the alliance filter — all checked = no filter.
+                </div>
             </div>
 
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;">
@@ -354,4 +420,59 @@
         const stop = document.getElementById("nova-ara-a-stop");
         if (scan) scan.disabled = scanning;
         if (stop) stop.disabled = !scanning;
+    }
+
+    // ============================================================
+    // FILTER LISTS (1.6.2)
+    //   Checked = allowed. Everything checked (or nothing checked) = no filter.
+    //   Values come from HTML-escaped, data-* attributes so names with quotes
+    //   or non-ASCII characters survive the round-trip.
+    // ============================================================
+    function renderFilterList(containerId, values, selected, dataAttr, onChange) {
+        const wrap = document.getElementById(containerId);
+        if (!wrap) return;
+        if (!values || values.length === 0) {
+            wrap.innerHTML = `<span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>`;
+            return;
+        }
+        wrap.innerHTML = values.map((v) => {
+            const checked = selected.has(v) ? "checked" : "";
+            return `<label><input type="checkbox" ${dataAttr}="${escapeHtml(v)}" ${checked}><span>${escapeHtml(v)}</span></label>`;
+        }).join("");
+        wrap.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+            cb.addEventListener("change", () => {
+                const val = cb.getAttribute(dataAttr);
+                if (cb.checked) selected.add(val);
+                else selected.delete(val);
+                onChange();
+            });
+        });
+    }
+
+    function renderAllianceFilter() {
+        renderFilterList(
+            "nova-ally-filter-list",
+            state.availableAlliances,
+            state.selectedAlliances,
+            "data-ally",
+            () => {
+                saveSelection(FILTER_KEYS.ally, state.selectedAlliances);
+                renderList();
+                updateStats();
+            }
+        );
+    }
+
+    function renderAttackerFilter() {
+        renderFilterList(
+            "nova-atk-filter-list",
+            state.availableAttackers,
+            state.selectedAttackers,
+            "data-attacker",
+            () => {
+                saveSelection(FILTER_KEYS.attacker, state.selectedAttackers);
+                renderList();
+                updateStats();
+            }
+        );
     }

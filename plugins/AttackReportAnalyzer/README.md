@@ -28,8 +28,15 @@ Install via Tampermonkey / Violentmonkey / Greasemonkey:
 2. Click **🔍 Scan Reports** in the injected box.
 3. Wait for scan to complete.
 4. Filter by min loot % and max distance.
-5. Export as `farm-list-v1` (Copy/Download) for Farm Manager import,
+5. Optionally narrow down with the **Alliance filter** (alliance of the *target*
+   village) and the **Attacker filter** — both lists are built from what the scan
+   actually found. Click any column header to sort (asc/desc).
+6. Export as `farm-list-v1` (Copy/Download) for Farm Manager import,
    OR export analytical JSON for reference.
+
+> Filter rule: **nothing checked = no filter**, **everything checked = no
+> filter**, a partial selection = only the checked values. Use **Invert** to get
+> the complement of the current selection.
 
 ## Build
 
@@ -51,6 +58,8 @@ node --check AttackReportAnalyzer.user.js
 
 ## Version
 
+- `1.6.2` — target-village **Alliance** column + alliance/attacker filters +
+  sortable columns
 - `1.6.1` — fixed the `/report/offensive` reader (`#overview` table + relative
   `?id=…` links), shared row extractor, loot fallback from the list icon,
   version added to `@name`
@@ -61,13 +70,17 @@ node --check AttackReportAnalyzer.user.js
 
 ## Notes
 
-- Alliance cache keys: `nova_ara_alliance_cache_v5`, `nova_ara_alliance_coords_v5`
-- Own-reports cache keys: `nova_ara_own_cache_v1`, `nova_ara_own_coords_v1`
+- Alliance cache keys: `nova_ara_alliance_cache_v5`, `nova_ara_alliance_coords_v6`
+- Own-reports cache keys: `nova_ara_own_cache_v1`, `nova_ara_own_coords_v2`
+- Filter/sort keys: `nova_ara_<mode>_ally_filter`, `nova_ara_<mode>_attacker_filter`,
+  `nova_ara_<mode>_sort` (`<mode>` = `alliance` \| `own`)
+- Alliance source: the **target** village's map detail page. Attacker alliance is
+  never used for the column/filter.
 - Cache TTL: 30 minutes
 - Only scans the current page's reports (not paginated)
 - Verified DOM structure (from a real `/report/offensive` page): table
   `#overview.row_table_data` inside `#reportsForm`, rows `td.sel` + `td.sub`
   (`img.iReport.iReport1`, `a.reportInfoIcon[href*="reportId="]`,
   `div > a[href="?id=…%7C…&s=1"]`) + `td.dat`
-- Tampermonkey name: `Nova Attack Report Analyzer - Alliance (V 1.6.1)`
+- Tampermonkey name: `Nova Attack Report Analyzer - Alliance (V 1.6.2)`
 

@@ -1,16 +1,16 @@
 // ═══════════════════════════════════════════════════════════
 // ⚠ AUTO-GENERATED FILE — DO NOT EDIT DIRECTLY
-// Generated: 2026-10-09T18:59:38.090Z
+// Generated: 2026-10-18T21:37:44.453Z
 // Source: src/ + ../../src/shared/
 // Rebuild: node build.js
 // ═══════════════════════════════════════════════════════════
 // ==UserScript==
-// @name         Nova Attack Report Analyzer - Alliance (V 1.6.1)
+// @name         Nova Attack Report Analyzer - Alliance (V 1.6.2)
 // @name:fa      نوا آنالایزر گزارش حملات اتحاد
 // @namespace    https://github.com/Logical-Developer/Nova-Attack-Report-Analyzer
-// @version      1.6.1
-// @description  Analyze attack reports (alliance + own). Extract farm targets with loot %, distance, coordinates, tribe. Separate Natars and Oases. Export as farm-list-v1 (compatible with Farm Manager) or analytical JSON.
-// @description:fa  تحلیل گزارش‌های حمله (اتحاد و شخصی). استخراج فارم‌ها با درصد غارت، فاصله، مختصات و نژاد. خروجی farm-list-v1 (سازگار با Farm Manager) یا JSON تحلیلی.
+// @version      1.6.2
+// @description  Analyze attack reports (alliance + own). Extract farm targets with loot %, distance, coordinates, tribe, target-village alliance. Separate Natars and Oases. Filter by alliance / attacker, sort columns. Export as farm-list-v1 (compatible with Farm Manager) or analytical JSON.
+// @description:fa  تحلیل گزارش‌های حمله (اتحاد و شخصی). استخراج فارم‌ها با درصد غارت، فاصله، مختصات، نژاد و اتحاد دهکده هدف. فیلتر بر اساس اتحاد/مهاجم، مرتب‌سازی ستون‌ها. خروجی farm-list-v1 (سازگار با Farm Manager) یا JSON تحلیلی.
 // @author       Nova
 // @match        *://*.travian.com/alliance/reports*
 // @match        *://*.travian.com/report/offensive*
@@ -119,12 +119,13 @@ function _sharedSaveCoordsCache(key, c) {
         const cache = _sharedLoadCoordsCache(cfg.coordsCacheKey);
         const key = String(villageId);
         if (cache[key] && cache[key].x != null && cache[key].y != null
-            && cache[key].distance != null && cache[key].tribe) {
+            && cache[key].distance != null && cache[key].tribe
+            && "alliance" in cache[key]) {
             cfg.logger(`cache hit full ${villageId}`, cache[key]);
             return cache[key];
         }
 
-        let info = { x: null, y: null, distance: null, name: null, tribe: null };
+        let info = { x: null, y: null, distance: null, name: null, tribe: null, alliance: null };
 
         try {
             const url = `/karte.php?d=${villageId}`;
@@ -157,6 +158,7 @@ function _sharedSaveCoordsCache(key, c) {
             if (info.distance == null) info.distance = iframeInfo.distance;
             if (!info.tribe) info.tribe = iframeInfo.tribe;
             if (!info.name) info.name = iframeInfo.name;
+            if (!info.alliance) info.alliance = iframeInfo.alliance;
         }
 
         if (info.x != null && info.y != null) {
@@ -205,24 +207,24 @@ function _sharedSaveCoordsCache(key, c) {
                     }
                 }
                 if (attempts >= cfg.iframeMaxAttempts) {
-                    finish({ x: null, y: null, distance: null, name: null, tribe: null });
+                    finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
                     return;
                 }
                 setTimeout(check, cfg.iframeWaitMs);
             };
 
             iframe.onload = () => setTimeout(check, 250);
-            iframe.onerror = () => finish({ x: null, y: null, distance: null, name: null, tribe: null });
+            iframe.onerror = () => finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
             document.body.appendChild(iframe);
 
             setTimeout(() => {
-                if (!done) finish({ x: null, y: null, distance: null, name: null, tribe: null });
+                if (!done) finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
             }, cfg.iframeMaxAttempts * cfg.iframeWaitMs + 2000);
         });
     }
 
     function _sharedParseMapDetail(doc) {
-        const out = { x: null, y: null, distance: null, name: null, tribe: null };
+        const out = { x: null, y: null, distance: null, name: null, tribe: null, alliance: null };
 
         const tileDetails = doc.querySelector("#tileDetails");
         const scope = tileDetails || doc;
@@ -261,9 +263,14 @@ function _sharedSaveCoordsCache(key, c) {
             if (label === "tribe" && !out.tribe) {
                 if (val) out.tribe = val;
             }
+            if (label === "alliance" && !out.alliance) {
+                const link = td.querySelector("a");
+                const av = _sharedStripBidi(link ? link.textContent : td.textContent).trim();
+                if (av && av !== "-" && av !== "—") out.alliance = av;
+            }
         });
 
-        if (out.distance === null || !out.tribe) {
+        if (out.distance === null || !out.tribe || !out.alliance) {
             doc.querySelectorAll("tr").forEach((tr) => {
                 const th = tr.querySelector("th");
                 const td = tr.querySelector("td");
@@ -277,7 +284,23 @@ function _sharedSaveCoordsCache(key, c) {
                 if (!out.tribe && /tribe/i.test(label)) {
                     if (val) out.tribe = val;
                 }
+                if (!out.alliance && /alliance/i.test(label)) {
+                    const link = td.querySelector("a");
+                    const av = _sharedStripBidi(link ? link.textContent : td.textContent).trim();
+                    if (av && av !== "-" && av !== "—") out.alliance = av;
+                }
             });
+        }
+
+        // ⭐ 1.6.2: اگر برچسب «Alliance» روی صفحه نبود (مارک‌آپ متفاوت)، لینک
+        // پروفایل اتحاد (/alliance/<id>) داخل نقشه روش دوم است.
+        if (!out.alliance) {
+            const allyLink = scope.querySelector('a[href*="/alliance/"]')
+                || doc.querySelector('#map_details a[href*="/alliance/"], #tileDetails a[href*="/alliance/"]');
+            if (allyLink) {
+                const av = _sharedStripBidi(allyLink.textContent).trim();
+                if (av && av !== "-" && av !== "—") out.alliance = av;
+            }
         }
 
         return out;
@@ -549,12 +572,12 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
     // CONFIG
     // ============================================================
     const CONFIG = {
-        version: "1.6.1",
+        version: "1.6.2",
         debug: true,
         delayBetweenReports: 300,
         delayBetweenVillages: 400,
         storageKey: "nova_ara_alliance_cache_v5",
-        coordsCacheKey: "nova_ara_alliance_coords_v5",
+        coordsCacheKey: "nova_ara_alliance_coords_v6",
         cacheTTL: 30 * 60 * 1000,
         maxReports: 500,
         iframeWaitMs: 150,
@@ -583,7 +606,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             id: "own",
             title: "Nova Attack Report Analyzer — Own Reports",
             storageKey: "nova_ara_own_cache_v1",
-            coordsCacheKey: "nova_ara_own_coords_v1",
+            coordsCacheKey: "nova_ara_own_coords_v2",
             farmListName: "Nova Own Farms",
             fileTag: "own",
             pathTest: /\/report\/offensive/,
@@ -788,6 +811,44 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 background:#3a4a80; color:#fff; padding:2px 8px;
                 border-radius:3px; min-width:44px; text-align:center;
             }
+            #nova-ara-a-box .nova-filter-title {
+                font-weight: bold; color: #2a4a70; font-size: 12px;
+                margin-bottom: 6px;
+            }
+            #nova-ara-a-box .nova-mini-btn {
+                font-size: 10px; padding: 3px 8px;
+                border: 1px solid #8a9ac0; background: #e0e8f0;
+                border-radius: 3px; cursor: pointer; color: #1a2050;
+                font-family: Verdana, sans-serif; font-weight: bold;
+            }
+            #nova-ara-a-box .nova-mini-btn:hover { background: #d0dae8; }
+            #nova-ara-a-box .nova-ally-tag {
+                display: inline-block; background: rgba(150,120,200,.3);
+                color: #3a1a6a; padding: 1px 5px; border-radius: 3px;
+                font-size: 9px; font-weight: bold; max-width: 110px;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                vertical-align: middle;
+            }
+            #nova-ara-a-box table.nova-table th[data-sort] { cursor: pointer; user-select: none; }
+            #nova-ara-a-box table.nova-table th[data-sort]:hover { background: #6a7eb4; }
+            #nova-ara-a-box table.nova-table th[data-sort] .sort-ind {
+                font-size: 9px; opacity: .85; margin-left: 2px;
+            }
+            #nova-ara-a-box .nova-filter-list {
+                display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px;
+                max-height: 110px; overflow-y: auto;
+            }
+            #nova-ara-a-box .nova-filter-list label {
+                display: inline-flex; align-items: center; gap: 4px;
+                cursor: pointer; user-select: none; font-weight: normal;
+                color: #1a2050; font-size: 11px;
+            }
+            #nova-ara-a-box .nova-filter-list input[type="checkbox"] {
+                cursor: pointer; width: 14px; height: 14px;
+            }
+            #nova-ara-a-box .nova-filter-hint {
+                margin-top: 6px; font-size: 10px; color: #5a6a80;
+            }
         `;
         document.head.appendChild(st);
     }
@@ -886,6 +947,34 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                     <span id="nova-ara-a-dist-slider-val" class="nova-val-badge">200</span>
                     <span style="font-size:10px;color:${THEME.textMuted};font-weight:normal;">(0 = no limit, else ≤ N fields)</span>
                 </label>
+            </div>
+
+            <div class="nova-section" id="nova-ally-filter-wrap">
+                <div class="nova-filter-title">🏰 Alliance Filter <span style="font-weight:normal;font-size:10px;color:${THEME.textMuted};">(target village alliance)</span></div>
+                <div id="nova-ally-filter-list" class="nova-filter-list">
+                    <span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>
+                </div>
+                <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="nova-ally-all" class="nova-mini-btn">All</button>
+                    <button type="button" id="nova-ally-invert" class="nova-mini-btn">Invert</button>
+                </div>
+                <div class="nova-filter-hint">
+                    No alliance checked → all included. Some checked → only those are shown.
+                </div>
+            </div>
+
+            <div class="nova-section" id="nova-atk-filter-wrap">
+                <div class="nova-filter-title">⚔️ Attacker Filter</div>
+                <div id="nova-atk-filter-list" class="nova-filter-list">
+                    <span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>
+                </div>
+                <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="nova-atk-all" class="nova-mini-btn">All</button>
+                    <button type="button" id="nova-atk-invert" class="nova-mini-btn">Invert</button>
+                </div>
+                <div class="nova-filter-hint">
+                    Same rule as the alliance filter — all checked = no filter.
+                </div>
             </div>
 
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;">
@@ -1005,6 +1094,61 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         if (scan) scan.disabled = scanning;
         if (stop) stop.disabled = !scanning;
     }
+
+    // ============================================================
+    // FILTER LISTS (1.6.2)
+    //   Checked = allowed. Everything checked (or nothing checked) = no filter.
+    //   Values come from HTML-escaped, data-* attributes so names with quotes
+    //   or non-ASCII characters survive the round-trip.
+    // ============================================================
+    function renderFilterList(containerId, values, selected, dataAttr, onChange) {
+        const wrap = document.getElementById(containerId);
+        if (!wrap) return;
+        if (!values || values.length === 0) {
+            wrap.innerHTML = `<span style="color:${THEME.textMuted};font-style:italic;">Run a scan first</span>`;
+            return;
+        }
+        wrap.innerHTML = values.map((v) => {
+            const checked = selected.has(v) ? "checked" : "";
+            return `<label><input type="checkbox" ${dataAttr}="${escapeHtml(v)}" ${checked}><span>${escapeHtml(v)}</span></label>`;
+        }).join("");
+        wrap.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+            cb.addEventListener("change", () => {
+                const val = cb.getAttribute(dataAttr);
+                if (cb.checked) selected.add(val);
+                else selected.delete(val);
+                onChange();
+            });
+        });
+    }
+
+    function renderAllianceFilter() {
+        renderFilterList(
+            "nova-ally-filter-list",
+            state.availableAlliances,
+            state.selectedAlliances,
+            "data-ally",
+            () => {
+                saveSelection(FILTER_KEYS.ally, state.selectedAlliances);
+                renderList();
+                updateStats();
+            }
+        );
+    }
+
+    function renderAttackerFilter() {
+        renderFilterList(
+            "nova-atk-filter-list",
+            state.availableAttackers,
+            state.selectedAttackers,
+            "data-attacker",
+            () => {
+                saveSelection(FILTER_KEYS.attacker, state.selectedAttackers);
+                renderList();
+                updateStats();
+            }
+        );
+    }
     // ============================================================
     // STATE
     // ============================================================
@@ -1015,6 +1159,26 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         maxDistance: 0,
         activeTab: "normal",
         debugBuffer: [],
+
+        // ⭐ 1.6.2 — filters / sort (alliance + attacker are shared between modes via
+        // the MODE-specific localStorage prefix, see FILTER_KEYS below)
+        selectedAlliances: new Set(),
+        availableAlliances: [],
+        selectedAttackers: new Set(),
+        availableAttackers: [],
+        sortKey: "distance",
+        sortAsc: true,
+    };
+
+    // ============================================================
+    // FILTER / SORT PERSISTENCE KEYS (1.6.2)
+    //   {mode} = "alliance" | "own" — an own scan never overwrites the
+    //   alliance selections (same idea as the per-mode cache keys).
+    // ============================================================
+    const FILTER_KEYS = {
+        ally: `nova_ara_${MODE.id}_ally_filter`,
+        attacker: `nova_ara_${MODE.id}_attacker_filter`,
+        sort: `nova_ara_${MODE.id}_sort`,
     };
 
     // ============================================================
@@ -1053,8 +1217,98 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
 
     function parseReportDetail(doc, reportId) { return _sharedParseReportDetail(doc, reportId); }
     async function fetchReportDetail(report) { return _sharedFetchReportDetail(report, parseReportDetail); }
-    function aggregateByVillage(results) { return _sharedAggregateByVillage(results); }
+
+    // ⭐ 1.6.2: اتحادِ روستای هدف (نه اتحاد مهاجم). منبع به ترتیب اولویت:
+    //   1. d.mapAlliance  ← از /karte.php?d=<id> (منبع اصلی و معتبر)
+    //   2. d.defender.alliance ← اگر صفحهٔ گزارش اتحاد مدافع را داشت
+    function targetAllianceOf(d) {
+        return (d && (d.mapAlliance || d.defender?.alliance)) || "";
+    }
+
+    // ⭐ 1.6.2: فیلد یکنواخت روی نتیجهٔ aggregate — در _sharedAggregateByVillage
+    // ذخیره نمی‌شود، پس بعد از آن روی هر آیتم ست می‌کنیم (بدون تغییر shared).
+    function stampAlliance(aggregated, results) {
+        const byVillage = new Map();
+        results.forEach((r) => {
+            if (!r.defender || !r.defender.villageId) return;
+            const a = targetAllianceOf(r);
+            if (!a) return;
+            if (!byVillage.has(r.defender.villageId)) byVillage.set(r.defender.villageId, a);
+        });
+        aggregated.forEach((v) => {
+            v.mapAlliance = byVillage.get(v.villageId) || "";
+            // فیلد یکنواخت برای جدول/خروجی — اتحاد روستای هدف
+            v.alliance = v.mapAlliance || v.alliance || "";
+        });
+        return aggregated;
+    }
+
+    function aggregateByVillage(results) {
+        return stampAlliance(_sharedAggregateByVillage(results), results);
+    }
+
     async function fetchVillageInfo(villageId) { return _sharedFetchVillageInfo(villageId, SHARED_CFG); }
+
+    // ============================================================
+    // FILTER HELPERS (1.6.2)
+    //   Rule: an EMPTY selection set means "no filter" (everything passes).
+    //   A selection equal to the full available list also means "no filter".
+    //   Otherwise only the checked values pass.
+    // ============================================================
+    function isSelectionInactive(sel, available) {
+        if (!sel || sel.size === 0) return true;
+        if (available && sel.size >= available.length) return true;
+        return false;
+    }
+
+    // Rebuild availableAlliances / availableAttackers from a results array and
+    // restore the persisted selections (intersected with what is really there).
+    function rebuildFilterOptions(results) {
+        const allies = new Set();
+        const attackers = new Set();
+        results.forEach((r) => {
+            const a = targetAllianceOf(r);
+            if (a) allies.add(a);
+            if (r.attacker && r.attacker.player) attackers.add(r.attacker.player);
+        });
+
+        state.availableAlliances = [...allies].sort((a, b) => a.localeCompare(b));
+        state.availableAttackers = [...attackers].sort((a, b) => a.localeCompare(b));
+
+        state.selectedAlliances = loadSelection(FILTER_KEYS.ally, allies);
+        state.selectedAttackers = loadSelection(FILTER_KEYS.attacker, attackers);
+    }
+
+    function loadSelection(key, availableSet) {
+        const available = [...availableSet];
+        let saved = null;
+        try {
+            const raw = localStorage.getItem(key);
+            if (raw) saved = JSON.parse(raw);
+        } catch (e) { saved = null; }
+        if (!Array.isArray(saved)) return new Set(available);
+        return new Set(saved.filter((x) => availableSet.has(x)));
+    }
+
+    function saveSelection(key, set) {
+        try { localStorage.setItem(key, JSON.stringify([...set])); } catch (e) {}
+    }
+
+    function loadSortPrefs() {
+        try {
+            const s = JSON.parse(localStorage.getItem(FILTER_KEYS.sort) || "null");
+            if (s && s.key) {
+                state.sortKey = s.key;
+                state.sortAsc = !!s.asc;
+            }
+        } catch (e) {}
+    }
+
+    function saveSortPrefs() {
+        try {
+            localStorage.setItem(FILTER_KEYS.sort, JSON.stringify({ key: state.sortKey, asc: state.sortAsc }));
+        } catch (e) {}
+    }
 
     // ============================================================
     // MAIN SCAN
@@ -1138,6 +1392,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                         d.y = info.y;
                         d.distance = info.distance;
                         d.tribe = info.tribe;
+                        d.mapAlliance = info.alliance || ""; // ⭐ 1.6.2 — اتحاد دهکدهٔ هدف
                         if (info.name) d.defender.mapName = info.name;
                     }
                 });
@@ -1150,6 +1405,11 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         state.results = details;
         state.scanning = false;
         setButtonsEnabled(false);
+
+        // ⭐ 1.6.2 — available alliance/attacker lists + restore persisted selection
+        rebuildFilterOptions(details);
+        renderAllianceFilter();
+        renderAttackerFilter();
 
         saveCache({
             timestamp: Date.now(),
@@ -1179,18 +1439,35 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
     function getFilteredAggregated() {
         const minPct = state.filterPercent;
         const maxDist = state.maxDistance;
-        const filtered = state.results.filter((r) => r.lootPercent >= minPct);
+
+        // ── 1.6.2: attacker filter at raw-result level (a village may be
+        //    attacked by several players, so this must run before aggregate)
+        let filtered = state.results.filter((r) => r.lootPercent >= minPct);
+        if (!isSelectionInactive(state.selectedAttackers, state.availableAttackers)) {
+            filtered = filtered.filter((r) =>
+                r.attacker && r.attacker.player && state.selectedAttackers.has(r.attacker.player)
+            );
+        }
+
         const aggregated = aggregateByVillage(filtered);
-        const result = aggregated.filter((v) => {
+
+        // ── 1.6.2: alliance filter at aggregated level (target village alliance)
+        let result = aggregated;
+        if (!isSelectionInactive(state.selectedAlliances, state.availableAlliances)) {
+            result = aggregated.filter((v) => {
+                const ally = v.mapAlliance || v.alliance || "";
+                return ally && state.selectedAlliances.has(ally);
+            });
+        }
+
+        // ── existing distance filter
+        result = result.filter((v) => {
             if (maxDist === 0) return true;
             if (v.distance == null) return false;
             return v.distance <= maxDist;
         });
-        result.sort((a, b) => {
-            const da = a.distance ?? 99999;
-            const db = b.distance ?? 99999;
-            return da - db;
-        });
+
+        result.sort((a, b) => (a.distance ?? 99999) - (b.distance ?? 99999));
         return result;
     }
 
@@ -1204,7 +1481,8 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             villageId: v.villageId,
             village: v.village,
             player: v.player,
-            alliance: v.alliance,
+            // ⭐ 1.6.2 — اتحادِ دهکدهٔ هدف (نه اتحاد مهاجم)
+            alliance: v.mapAlliance || v.alliance || null,
             tribe: v.tribe,
             x: v.x,
             y: v.y,
@@ -1236,6 +1514,9 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 oasisCount: includeOasis ? oasis.length : 0,
                 natarsCount: includeNatars ? natars.length : 0,
                 included: { normal: includeNormal, oasis: includeOasis, natars: includeNatars },
+                allianceFilter: [...state.selectedAlliances],
+                attackerFilter: [...state.selectedAttackers],
+                sort: { key: state.sortKey, asc: state.sortAsc },
             },
             normal: includeNormal ? normal.map(mkEntry) : [],
             oasis: includeOasis ? oasis.map(mkEntry) : [],
@@ -1276,6 +1557,36 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
     }
 
     // ============================================================
+    // SORT (1.6.2) — client-side, applied at render level only so the
+    // export order (distance asc) stays exactly as in 1.6.1.
+    // ============================================================
+    const SORT_KEYS = ["village", "x", "distance", "lootPercent", "tribe", "alliance", "player"];
+
+    function sortValue(v, key) {
+        switch (key) {
+            case "village": return (v.village || "").toLowerCase();
+            case "x": return (v.x != null && v.y != null) ? (v.x * 10000 + v.y) : 99999999;
+            case "distance": return v.distance ?? 999999;
+            case "lootPercent": return v.lootPercent ?? 0;
+            case "tribe": return (v.tribe || "").toLowerCase();
+            case "alliance": return (v.alliance || "").toLowerCase();
+            case "player": return (v.player || "").toLowerCase();
+            default: return 0;
+        }
+    }
+
+    function sortItems(items, key, asc) {
+        if (!SORT_KEYS.includes(key)) return items;
+        return [...items].sort((a, b) => {
+            const va = sortValue(a, key);
+            const vb = sortValue(b, key);
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+        });
+    }
+
+    // ============================================================
     // RENDER
     // ============================================================
     function renderList() {
@@ -1288,11 +1599,17 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         else if (state.activeTab === "oasis") items = data.oasis;
         else items = data.natars;
 
+        items = sortItems(items, state.sortKey, state.sortAsc);
+
         if (items.length === 0) {
             const distInfo = state.maxDistance > 0 ? `, distance ≤ ${state.maxDistance}` : "";
             listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo})</div>`;
             return;
         }
+
+        const ind = (k) => state.sortKey === k
+            ? `<span class="sort-ind">${state.sortAsc ? "▲" : "▼"}</span>`
+            : "";
 
         const rows = items.map((v) => {
             let cls = "p0";
@@ -1302,6 +1619,9 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             const dist = v.distance != null ? v.distance : "—";
             const coord = (v.x != null && v.y != null) ? `${v.x}|${v.y}` : "—";
             const tribe = v.tribe ? `<span class="nova-tribe-tag">${escapeHtml(v.tribe)}</span>` : "";
+            const ally = v.alliance
+                ? `<span class="nova-ally-tag" title="${escapeHtml(v.alliance)}">${escapeHtml(v.alliance)}</span>`
+                : "—";
             const nat = v.isNatars ? `<span class="nova-nat-tag">NAT</span>` : "";
             const oas = v.isOasis ? `<span class="nova-oasis-tag">OASIS</span>` : "";
             const hits = v.hits > 1 ? `<span class="nova-hits">×${v.hits}</span>` : "";
@@ -1317,16 +1637,33 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 <td>${dist}</td>
                 <td><span class="nova-loot-pct ${cls}">${v.lootPercent}%</span>${hits}</td>
                 <td>${tribe}</td>
+                <td>${ally}</td>
                 <td title="${escapeHtml(v.player || "")}">${escapeHtml(v.player || "—")}</td>
             </tr>`;
         }).join("");
 
         listEl.innerHTML = `<table class="nova-table">
             <thead><tr>
-                <th>Village</th><th>Coord</th><th>Dist</th><th>Loot</th><th>Tribe</th><th>Player</th>
+                <th data-sort="village">Village${ind("village")}</th>
+                <th data-sort="x">Coord${ind("x")}</th>
+                <th data-sort="distance">Dist${ind("distance")}</th>
+                <th data-sort="lootPercent">Loot${ind("lootPercent")}</th>
+                <th data-sort="tribe">Tribe${ind("tribe")}</th>
+                <th data-sort="alliance">Alliance${ind("alliance")}</th>
+                <th data-sort="player">Player${ind("player")}</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
+
+        listEl.querySelectorAll("th[data-sort]").forEach((th) => {
+            th.addEventListener("click", () => {
+                const k = th.dataset.sort;
+                if (state.sortKey === k) state.sortAsc = !state.sortAsc;
+                else { state.sortKey = k; state.sortAsc = true; }
+                saveSortPrefs();
+                renderList();
+            });
+        });
     }
 
     function updateStats() {
@@ -1408,6 +1745,11 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             return;
         }
         state.results = cached.results;
+        // ⭐ 1.6.2 — بازسازی لیست اتحاد/مهاجم از نتایج کش (ممکن است کش قدیمی
+        // فیلد mapAlliance نداشته باشد؛ در این حالت اتحاد خالی می‌ماند)
+        rebuildFilterOptions(state.results);
+        renderAllianceFilter();
+        renderAttackerFilter();
         const ts = new Date(cached._cachedAt || cached.timestamp).toLocaleString();
         appendLog(`Loaded ${cached.results.length} cached report(s) from ${ts}.`);
         renderList();
@@ -1482,6 +1824,41 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 renderList();
             });
         });
+
+        // ── 1.6.2: alliance / attacker filter buttons (All / Invert) ──
+        const wireFilterButtons = (allId, invertId, selKey, availableKey, persistKey, rerender) => {
+            const allBtn = document.getElementById(allId);
+            const invertBtn = document.getElementById(invertId);
+            if (allBtn) allBtn.addEventListener("click", () => {
+                state[selKey] = new Set(state[availableKey]);
+                saveSelection(persistKey, state[selKey]);
+                rerender();
+                renderList();
+                updateStats();
+            });
+            if (invertBtn) invertBtn.addEventListener("click", () => {
+                const next = new Set();
+                state[availableKey].forEach((v) => {
+                    if (!state[selKey].has(v)) next.add(v);
+                });
+                state[selKey] = next;
+                saveSelection(persistKey, state[selKey]);
+                rerender();
+                renderList();
+                updateStats();
+            });
+        };
+
+        wireFilterButtons(
+            "nova-ally-all", "nova-ally-invert",
+            "selectedAlliances", "availableAlliances", FILTER_KEYS.ally,
+            renderAllianceFilter
+        );
+        wireFilterButtons(
+            "nova-atk-all", "nova-atk-invert",
+            "selectedAttackers", "availableAttackers", FILTER_KEYS.attacker,
+            renderAttackerFilter
+        );
 
         ["nova-chk-normal", "nova-chk-oasis", "nova-chk-natars"].forEach((id) => {
             const el = document.getElementById(id);
@@ -1582,6 +1959,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             return;
         }
         log(`Mode: ${mode.id} (${mode.title})`);
+        loadSortPrefs();
         injectStyles();
 
         if (!injectBox()) {

@@ -66,6 +66,41 @@
             });
         });
 
+        // ── 1.6.2: alliance / attacker filter buttons (All / Invert) ──
+        const wireFilterButtons = (allId, invertId, selKey, availableKey, persistKey, rerender) => {
+            const allBtn = document.getElementById(allId);
+            const invertBtn = document.getElementById(invertId);
+            if (allBtn) allBtn.addEventListener("click", () => {
+                state[selKey] = new Set(state[availableKey]);
+                saveSelection(persistKey, state[selKey]);
+                rerender();
+                renderList();
+                updateStats();
+            });
+            if (invertBtn) invertBtn.addEventListener("click", () => {
+                const next = new Set();
+                state[availableKey].forEach((v) => {
+                    if (!state[selKey].has(v)) next.add(v);
+                });
+                state[selKey] = next;
+                saveSelection(persistKey, state[selKey]);
+                rerender();
+                renderList();
+                updateStats();
+            });
+        };
+
+        wireFilterButtons(
+            "nova-ally-all", "nova-ally-invert",
+            "selectedAlliances", "availableAlliances", FILTER_KEYS.ally,
+            renderAllianceFilter
+        );
+        wireFilterButtons(
+            "nova-atk-all", "nova-atk-invert",
+            "selectedAttackers", "availableAttackers", FILTER_KEYS.attacker,
+            renderAttackerFilter
+        );
+
         ["nova-chk-normal", "nova-chk-oasis", "nova-chk-natars"].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.addEventListener("change", () => {
@@ -165,6 +200,7 @@
             return;
         }
         log(`Mode: ${mode.id} (${mode.title})`);
+        loadSortPrefs();
         injectStyles();
 
         if (!injectBox()) {

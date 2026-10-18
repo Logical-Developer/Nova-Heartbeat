@@ -8,6 +8,26 @@
         maxDistance: 0,
         activeTab: "normal",
         debugBuffer: [],
+
+        // ⭐ 1.6.2 — filters / sort (alliance + attacker are shared between modes via
+        // the MODE-specific localStorage prefix, see FILTER_KEYS below)
+        selectedAlliances: new Set(),
+        availableAlliances: [],
+        selectedAttackers: new Set(),
+        availableAttackers: [],
+        sortKey: "distance",
+        sortAsc: true,
+    };
+
+    // ============================================================
+    // FILTER / SORT PERSISTENCE KEYS (1.6.2)
+    //   {mode} = "alliance" | "own" — an own scan never overwrites the
+    //   alliance selections (same idea as the per-mode cache keys).
+    // ============================================================
+    const FILTER_KEYS = {
+        ally: `nova_ara_${MODE.id}_ally_filter`,
+        attacker: `nova_ara_${MODE.id}_attacker_filter`,
+        sort: `nova_ara_${MODE.id}_sort`,
     };
 
     // ============================================================
@@ -46,8 +66,98 @@
 
     function parseReportDetail(doc, reportId) { return _sharedParseReportDetail(doc, reportId); }
     async function fetchReportDetail(report) { return _sharedFetchReportDetail(report, parseReportDetail); }
-    function aggregateByVillage(results) { return _sharedAggregateByVillage(results); }
+
+    // ⭐ 1.6.2: اتحادِ روستای هدف (نه اتحاد مهاجم). منبع به ترتیب اولویت:
+    //   1. d.mapAlliance  ← از /karte.php?d=<id> (منبع اصلی و معتبر)
+    //   2. d.defender.alliance ← اگر صفحهٔ گزارش اتحاد مدافع را داشت
+    function targetAllianceOf(d) {
+        return (d && (d.mapAlliance || d.defender?.alliance)) || "";
+    }
+
+    // ⭐ 1.6.2: فیلد یکنواخت روی نتیجهٔ aggregate — در _sharedAggregateByVillage
+    // ذخیره نمی‌شود، پس بعد از آن روی هر آیتم ست می‌کنیم (بدون تغییر shared).
+    function stampAlliance(aggregated, results) {
+        const byVillage = new Map();
+        results.forEach((r) => {
+            if (!r.defender || !r.defender.villageId) return;
+            const a = targetAllianceOf(r);
+            if (!a) return;
+            if (!byVillage.has(r.defender.villageId)) byVillage.set(r.defender.villageId, a);
+        });
+        aggregated.forEach((v) => {
+            v.mapAlliance = byVillage.get(v.villageId) || "";
+            // فیلد یکنواخت برای جدول/خروجی — اتحاد روستای هدف
+            v.alliance = v.mapAlliance || v.alliance || "";
+        });
+        return aggregated;
+    }
+
+    function aggregateByVillage(results) {
+        return stampAlliance(_sharedAggregateByVillage(results), results);
+    }
+
     async function fetchVillageInfo(villageId) { return _sharedFetchVillageInfo(villageId, SHARED_CFG); }
+
+    // ============================================================
+    // FILTER HELPERS (1.6.2)
+    //   Rule: an EMPTY selection set means "no filter" (everything passes).
+    //   A selection equal to the full available list also means "no filter".
+    //   Otherwise only the checked values pass.
+    // ============================================================
+    function isSelectionInactive(sel, available) {
+        if (!sel || sel.size === 0) return true;
+        if (available && sel.size >= available.length) return true;
+        return false;
+    }
+
+    // Rebuild availableAlliances / availableAttackers from a results array and
+    // restore the persisted selections (intersected with what is really there).
+    function rebuildFilterOptions(results) {
+        const allies = new Set();
+        const attackers = new Set();
+        results.forEach((r) => {
+            const a = targetAllianceOf(r);
+            if (a) allies.add(a);
+            if (r.attacker && r.attacker.player) attackers.add(r.attacker.player);
+        });
+
+        state.availableAlliances = [...allies].sort((a, b) => a.localeCompare(b));
+        state.availableAttackers = [...attackers].sort((a, b) => a.localeCompare(b));
+
+        state.selectedAlliances = loadSelection(FILTER_KEYS.ally, allies);
+        state.selectedAttackers = loadSelection(FILTER_KEYS.attacker, attackers);
+    }
+
+    function loadSelection(key, availableSet) {
+        const available = [...availableSet];
+        let saved = null;
+        try {
+            const raw = localStorage.getItem(key);
+            if (raw) saved = JSON.parse(raw);
+        } catch (e) { saved = null; }
+        if (!Array.isArray(saved)) return new Set(available);
+        return new Set(saved.filter((x) => availableSet.has(x)));
+    }
+
+    function saveSelection(key, set) {
+        try { localStorage.setItem(key, JSON.stringify([...set])); } catch (e) {}
+    }
+
+    function loadSortPrefs() {
+        try {
+            const s = JSON.parse(localStorage.getItem(FILTER_KEYS.sort) || "null");
+            if (s && s.key) {
+                state.sortKey = s.key;
+                state.sortAsc = !!s.asc;
+            }
+        } catch (e) {}
+    }
+
+    function saveSortPrefs() {
+        try {
+            localStorage.setItem(FILTER_KEYS.sort, JSON.stringify({ key: state.sortKey, asc: state.sortAsc }));
+        } catch (e) {}
+    }
 
     // ============================================================
     // MAIN SCAN
@@ -131,6 +241,7 @@
                         d.y = info.y;
                         d.distance = info.distance;
                         d.tribe = info.tribe;
+                        d.mapAlliance = info.alliance || ""; // ⭐ 1.6.2 — اتحاد دهکدهٔ هدف
                         if (info.name) d.defender.mapName = info.name;
                     }
                 });
@@ -143,6 +254,11 @@
         state.results = details;
         state.scanning = false;
         setButtonsEnabled(false);
+
+        // ⭐ 1.6.2 — available alliance/attacker lists + restore persisted selection
+        rebuildFilterOptions(details);
+        renderAllianceFilter();
+        renderAttackerFilter();
 
         saveCache({
             timestamp: Date.now(),
@@ -172,18 +288,35 @@
     function getFilteredAggregated() {
         const minPct = state.filterPercent;
         const maxDist = state.maxDistance;
-        const filtered = state.results.filter((r) => r.lootPercent >= minPct);
+
+        // ── 1.6.2: attacker filter at raw-result level (a village may be
+        //    attacked by several players, so this must run before aggregate)
+        let filtered = state.results.filter((r) => r.lootPercent >= minPct);
+        if (!isSelectionInactive(state.selectedAttackers, state.availableAttackers)) {
+            filtered = filtered.filter((r) =>
+                r.attacker && r.attacker.player && state.selectedAttackers.has(r.attacker.player)
+            );
+        }
+
         const aggregated = aggregateByVillage(filtered);
-        const result = aggregated.filter((v) => {
+
+        // ── 1.6.2: alliance filter at aggregated level (target village alliance)
+        let result = aggregated;
+        if (!isSelectionInactive(state.selectedAlliances, state.availableAlliances)) {
+            result = aggregated.filter((v) => {
+                const ally = v.mapAlliance || v.alliance || "";
+                return ally && state.selectedAlliances.has(ally);
+            });
+        }
+
+        // ── existing distance filter
+        result = result.filter((v) => {
             if (maxDist === 0) return true;
             if (v.distance == null) return false;
             return v.distance <= maxDist;
         });
-        result.sort((a, b) => {
-            const da = a.distance ?? 99999;
-            const db = b.distance ?? 99999;
-            return da - db;
-        });
+
+        result.sort((a, b) => (a.distance ?? 99999) - (b.distance ?? 99999));
         return result;
     }
 
@@ -197,7 +330,8 @@
             villageId: v.villageId,
             village: v.village,
             player: v.player,
-            alliance: v.alliance,
+            // ⭐ 1.6.2 — اتحادِ دهکدهٔ هدف (نه اتحاد مهاجم)
+            alliance: v.mapAlliance || v.alliance || null,
             tribe: v.tribe,
             x: v.x,
             y: v.y,
@@ -229,6 +363,9 @@
                 oasisCount: includeOasis ? oasis.length : 0,
                 natarsCount: includeNatars ? natars.length : 0,
                 included: { normal: includeNormal, oasis: includeOasis, natars: includeNatars },
+                allianceFilter: [...state.selectedAlliances],
+                attackerFilter: [...state.selectedAttackers],
+                sort: { key: state.sortKey, asc: state.sortAsc },
             },
             normal: includeNormal ? normal.map(mkEntry) : [],
             oasis: includeOasis ? oasis.map(mkEntry) : [],
@@ -269,6 +406,36 @@
     }
 
     // ============================================================
+    // SORT (1.6.2) — client-side, applied at render level only so the
+    // export order (distance asc) stays exactly as in 1.6.1.
+    // ============================================================
+    const SORT_KEYS = ["village", "x", "distance", "lootPercent", "tribe", "alliance", "player"];
+
+    function sortValue(v, key) {
+        switch (key) {
+            case "village": return (v.village || "").toLowerCase();
+            case "x": return (v.x != null && v.y != null) ? (v.x * 10000 + v.y) : 99999999;
+            case "distance": return v.distance ?? 999999;
+            case "lootPercent": return v.lootPercent ?? 0;
+            case "tribe": return (v.tribe || "").toLowerCase();
+            case "alliance": return (v.alliance || "").toLowerCase();
+            case "player": return (v.player || "").toLowerCase();
+            default: return 0;
+        }
+    }
+
+    function sortItems(items, key, asc) {
+        if (!SORT_KEYS.includes(key)) return items;
+        return [...items].sort((a, b) => {
+            const va = sortValue(a, key);
+            const vb = sortValue(b, key);
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+        });
+    }
+
+    // ============================================================
     // RENDER
     // ============================================================
     function renderList() {
@@ -281,11 +448,17 @@
         else if (state.activeTab === "oasis") items = data.oasis;
         else items = data.natars;
 
+        items = sortItems(items, state.sortKey, state.sortAsc);
+
         if (items.length === 0) {
             const distInfo = state.maxDistance > 0 ? `, distance ≤ ${state.maxDistance}` : "";
             listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo})</div>`;
             return;
         }
+
+        const ind = (k) => state.sortKey === k
+            ? `<span class="sort-ind">${state.sortAsc ? "▲" : "▼"}</span>`
+            : "";
 
         const rows = items.map((v) => {
             let cls = "p0";
@@ -295,6 +468,9 @@
             const dist = v.distance != null ? v.distance : "—";
             const coord = (v.x != null && v.y != null) ? `${v.x}|${v.y}` : "—";
             const tribe = v.tribe ? `<span class="nova-tribe-tag">${escapeHtml(v.tribe)}</span>` : "";
+            const ally = v.alliance
+                ? `<span class="nova-ally-tag" title="${escapeHtml(v.alliance)}">${escapeHtml(v.alliance)}</span>`
+                : "—";
             const nat = v.isNatars ? `<span class="nova-nat-tag">NAT</span>` : "";
             const oas = v.isOasis ? `<span class="nova-oasis-tag">OASIS</span>` : "";
             const hits = v.hits > 1 ? `<span class="nova-hits">×${v.hits}</span>` : "";
@@ -310,16 +486,33 @@
                 <td>${dist}</td>
                 <td><span class="nova-loot-pct ${cls}">${v.lootPercent}%</span>${hits}</td>
                 <td>${tribe}</td>
+                <td>${ally}</td>
                 <td title="${escapeHtml(v.player || "")}">${escapeHtml(v.player || "—")}</td>
             </tr>`;
         }).join("");
 
         listEl.innerHTML = `<table class="nova-table">
             <thead><tr>
-                <th>Village</th><th>Coord</th><th>Dist</th><th>Loot</th><th>Tribe</th><th>Player</th>
+                <th data-sort="village">Village${ind("village")}</th>
+                <th data-sort="x">Coord${ind("x")}</th>
+                <th data-sort="distance">Dist${ind("distance")}</th>
+                <th data-sort="lootPercent">Loot${ind("lootPercent")}</th>
+                <th data-sort="tribe">Tribe${ind("tribe")}</th>
+                <th data-sort="alliance">Alliance${ind("alliance")}</th>
+                <th data-sort="player">Player${ind("player")}</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
+
+        listEl.querySelectorAll("th[data-sort]").forEach((th) => {
+            th.addEventListener("click", () => {
+                const k = th.dataset.sort;
+                if (state.sortKey === k) state.sortAsc = !state.sortAsc;
+                else { state.sortKey = k; state.sortAsc = true; }
+                saveSortPrefs();
+                renderList();
+            });
+        });
     }
 
     function updateStats() {

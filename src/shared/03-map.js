@@ -5,12 +5,13 @@
         const cache = _sharedLoadCoordsCache(cfg.coordsCacheKey);
         const key = String(villageId);
         if (cache[key] && cache[key].x != null && cache[key].y != null
-            && cache[key].distance != null && cache[key].tribe) {
+            && cache[key].distance != null && cache[key].tribe
+            && "alliance" in cache[key]) {
             cfg.logger(`cache hit full ${villageId}`, cache[key]);
             return cache[key];
         }
 
-        let info = { x: null, y: null, distance: null, name: null, tribe: null };
+        let info = { x: null, y: null, distance: null, name: null, tribe: null, alliance: null };
 
         try {
             const url = `/karte.php?d=${villageId}`;
@@ -43,6 +44,7 @@
             if (info.distance == null) info.distance = iframeInfo.distance;
             if (!info.tribe) info.tribe = iframeInfo.tribe;
             if (!info.name) info.name = iframeInfo.name;
+            if (!info.alliance) info.alliance = iframeInfo.alliance;
         }
 
         if (info.x != null && info.y != null) {
@@ -91,24 +93,24 @@
                     }
                 }
                 if (attempts >= cfg.iframeMaxAttempts) {
-                    finish({ x: null, y: null, distance: null, name: null, tribe: null });
+                    finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
                     return;
                 }
                 setTimeout(check, cfg.iframeWaitMs);
             };
 
             iframe.onload = () => setTimeout(check, 250);
-            iframe.onerror = () => finish({ x: null, y: null, distance: null, name: null, tribe: null });
+            iframe.onerror = () => finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
             document.body.appendChild(iframe);
 
             setTimeout(() => {
-                if (!done) finish({ x: null, y: null, distance: null, name: null, tribe: null });
+                if (!done) finish({ x: null, y: null, distance: null, name: null, tribe: null, alliance: null });
             }, cfg.iframeMaxAttempts * cfg.iframeWaitMs + 2000);
         });
     }
 
     function _sharedParseMapDetail(doc) {
-        const out = { x: null, y: null, distance: null, name: null, tribe: null };
+        const out = { x: null, y: null, distance: null, name: null, tribe: null, alliance: null };
 
         const tileDetails = doc.querySelector("#tileDetails");
         const scope = tileDetails || doc;
@@ -147,9 +149,14 @@
             if (label === "tribe" && !out.tribe) {
                 if (val) out.tribe = val;
             }
+            if (label === "alliance" && !out.alliance) {
+                const link = td.querySelector("a");
+                const av = _sharedStripBidi(link ? link.textContent : td.textContent).trim();
+                if (av && av !== "-" && av !== "—") out.alliance = av;
+            }
         });
 
-        if (out.distance === null || !out.tribe) {
+        if (out.distance === null || !out.tribe || !out.alliance) {
             doc.querySelectorAll("tr").forEach((tr) => {
                 const th = tr.querySelector("th");
                 const td = tr.querySelector("td");
@@ -163,7 +170,23 @@
                 if (!out.tribe && /tribe/i.test(label)) {
                     if (val) out.tribe = val;
                 }
+                if (!out.alliance && /alliance/i.test(label)) {
+                    const link = td.querySelector("a");
+                    const av = _sharedStripBidi(link ? link.textContent : td.textContent).trim();
+                    if (av && av !== "-" && av !== "—") out.alliance = av;
+                }
             });
+        }
+
+        // ⭐ 1.6.2: اگر برچسب «Alliance» روی صفحه نبود (مارک‌آپ متفاوت)، لینک
+        // پروفایل اتحاد (/alliance/<id>) داخل نقشه روش دوم است.
+        if (!out.alliance) {
+            const allyLink = scope.querySelector('a[href*="/alliance/"]')
+                || doc.querySelector('#map_details a[href*="/alliance/"], #tileDetails a[href*="/alliance/"]');
+            if (allyLink) {
+                const av = _sharedStripBidi(allyLink.textContent).trim();
+                if (av && av !== "-" && av !== "—") out.alliance = av;
+            }
         }
 
         return out;

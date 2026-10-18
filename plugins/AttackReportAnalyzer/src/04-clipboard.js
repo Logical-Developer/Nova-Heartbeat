@@ -58,6 +58,11 @@
             return;
         }
         state.results = cached.results;
+        // ⭐ 1.6.2 — بازسازی لیست اتحاد/مهاجم از نتایج کش (ممکن است کش قدیمی
+        // فیلد mapAlliance نداشته باشد؛ در این حالت اتحاد خالی می‌ماند)
+        rebuildFilterOptions(state.results);
+        renderAllianceFilter();
+        renderAttackerFilter();
         const ts = new Date(cached._cachedAt || cached.timestamp).toLocaleString();
         appendLog(`Loaded ${cached.results.length} cached report(s) from ${ts}.`);
         renderList();

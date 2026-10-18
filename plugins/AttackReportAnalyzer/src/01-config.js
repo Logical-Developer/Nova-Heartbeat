@@ -2,12 +2,12 @@
     // CONFIG
     // ============================================================
     const CONFIG = {
-        version: "1.6.1",
+        version: "1.6.2",
         debug: true,
         delayBetweenReports: 300,
         delayBetweenVillages: 400,
         storageKey: "nova_ara_alliance_cache_v5",
-        coordsCacheKey: "nova_ara_alliance_coords_v5",
+        coordsCacheKey: "nova_ara_alliance_coords_v6",
         cacheTTL: 30 * 60 * 1000,
         maxReports: 500,
         iframeWaitMs: 150,
@@ -36,7 +36,7 @@
             id: "own",
             title: "Nova Attack Report Analyzer — Own Reports",
             storageKey: "nova_ara_own_cache_v1",
-            coordsCacheKey: "nova_ara_own_coords_v1",
+            coordsCacheKey: "nova_ara_own_coords_v2",
             farmListName: "Nova Own Farms",
             fileTag: "own",
             pathTest: /\/report\/offensive/,
