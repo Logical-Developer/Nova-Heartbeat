@@ -2,7 +2,7 @@
     // CONFIG
     // ============================================================
     const CONFIG = {
-        version: "1.6.2",
+        version: "1.6.3",
         debug: true,
         delayBetweenReports: 300,
         delayBetweenVillages: 400,

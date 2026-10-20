@@ -132,16 +132,48 @@
             subject: "",
             date: "",
             attacker: { player: null, village: null, villageId: null, alliance: null },
-            defender: { player: null, village: null, villageId: null, alliance: null },
+            defender: { player: null, village: null, villageId: null, alliance: null, coordsKey: null },
             lootPercent: 0,
             lootCurrent: 0,
             lootCap: 0,
             isNatars: false,
             isOasis: false,
+            // ⭐ 1.6.3 — مختصات هدف مستقیم از خود صفحهٔ گزارش (layer 1 of the
+            // oasis fix). گزارش حمله به oasis مختصات را داخل خود <a class="village">
+            // مدافع دارد؛ این باعث می‌شود Distance حتی وقتی /karte.php در دسترس
+            // نیست یا آهسته است قابل محاسبه باشد.
+            x: null,
+            y: null,
         };
 
         const subjectEl = doc.querySelector(".headline .subject");
         if (subjectEl) out.subject = subjectEl.textContent.trim();
+
+        // ⭐ 1.6.3 — layer 1 (نسخهٔ واقعی): مختصات هدف در subject گزارش است،
+        // نه در .role.defender. نمونهٔ تأییدشده از private-doc:
+        //   <div class="subject">40 raids Unoccupied oasis &lrm;
+        //     <span class="coordinates coordinatesWrapper">
+        //       <span class="coordinateX">(&lrm;−&lrm;182&rlm;&rlm;</span>
+        //       <span class="coordinatePipe">|</span>
+        //       <span class="coordinateY">&lrm;−&lrm;79&rlm;&rlm;)</span>
+        //     </span>&rlm;</div>
+        // برای oasis در .role.defender فقط نام "40" آمده و مختصاتی نیست؛
+        // بنابراین بدون این خواندن، ستون Distance خالی می‌ماند.
+        const readCoords = (scope) => {
+            if (!scope) return null;
+            const cx = scope.querySelector(".coordinateX");
+            const cy = scope.querySelector(".coordinateY");
+            if (!cx || !cy) return null;
+            const x = _sharedParseCoord(cx.textContent);
+            const y = _sharedParseCoord(cy.textContent);
+            if (isNaN(x) || isNaN(y)) return null;
+            return { x, y };
+        };
+        const subjectCoords = readCoords(subjectEl) || readCoords(doc.querySelector(".headline"));
+        if (subjectCoords) {
+            out.x = subjectCoords.x;
+            out.y = subjectCoords.y;
+        }
 
         const timeEl = doc.querySelector(".header .time .text");
         if (timeEl) out.date = timeEl.textContent.trim();
@@ -179,6 +211,21 @@
             out.defender.village = v ? _sharedStripBidi(v.textContent) : null;
             out.defender.villageId = v ? _sharedExtractVillageId(v.getAttribute("href")) : null;
             out.defender.alliance = a ? a.textContent.trim() : null;
+
+            // ⭐ 1.6.3 — layer 1b: اگر headline مختصات نداشت، داخل خود
+            // <a class="village"> مدافع را نگاه کن (بعضی گزارش‌ها این‌جا دارند).
+            const fromVillage = readCoords(v) || readCoords(def);
+            if (fromVillage && out.x == null) {
+                out.x = fromVillage.x;
+                out.y = fromVillage.y;
+            }
+
+            // ⭐ 1.6.3 — layer 3: کلید پایدار oasis برای fetch نقشه.
+            // یک oasis با <a class="village" href="/karte.php?d=111898"> آدرس دارد،
+            // ولی اگر روزی لینک فقط ?x=&y= باشد هم باید کار کند.
+            if (v && !out.defender.villageId && out.x != null && out.y != null) {
+                out.defender.coordsKey = `${out.x}:${out.y}`;
+            }
         }
 
         if (/raids\s+Natars/i.test(out.subject)) out.isNatars = true;

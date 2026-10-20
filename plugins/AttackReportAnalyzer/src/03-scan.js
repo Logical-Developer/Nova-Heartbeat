@@ -6,6 +6,8 @@
         results: [],
         filterPercent: 0,
         maxDistance: 0,
+        // ⭐ 1.6.3 — حد پایین Distance (0 = بدون محدودیت)
+        minDistance: 0,
         activeTab: "normal",
         debugBuffer: [],
 
@@ -159,6 +161,36 @@
         } catch (e) {}
     }
 
+    // ⭐ 1.6.3 — مختصات روستای فعال (برای محاسبهٔ Distance وقتی /karte.php
+    // Distance را نمی‌دهد). منبع: #villageName[data-x][data-y] در layout،
+    // با fallback روی spان .coordinateX/.coordinateY در سرصفحه.
+    function getActiveVillageCoords() {
+        const vn = document.getElementById("villageName");
+        if (vn) {
+            const dx = parseInt(vn.getAttribute("data-x"), 10);
+            const dy = parseInt(vn.getAttribute("data-y"), 10);
+            if (!isNaN(dx) && !isNaN(dy)) return { x: dx, y: dy };
+        }
+        const box = document.querySelector("#sidebarBoxVillageList .listEntry.village.active .coordinatesWrapper")
+            || document.querySelector(".villageList .active .coordinatesWrapper");
+        if (box) {
+            const cx = box.querySelector(".coordinateX");
+            const cy = box.querySelector(".coordinateY");
+            if (cx && cy) {
+                const x = parseCoord(cx.textContent);
+                const y = parseCoord(cy.textContent);
+                if (!isNaN(x) && !isNaN(y)) return { x, y };
+            }
+        }
+        return null;
+    }
+
+    // فاصلهٔ اقلیدسی بین دو مختصات (Travian = فیلد)
+    function fieldsBetween(ax, ay, bx, by) {
+        if (ax == null || ay == null || bx == null || by == null) return null;
+        return Math.round(Math.hypot(ax - bx, ay - by));
+    }
+
     // ============================================================
     // MAIN SCAN
     // ============================================================
@@ -202,6 +234,9 @@
                 }
                 d.alliance = r.alliance;
                 d.dateTxt = r.dateTxt;
+                // ⭐ 1.6.3 — layer 1: مختصات استخراج‌شده از خود صفحهٔ گزارش.
+                // (x/y در _sharedParseReportDetail ست می‌شوند؛ این‌جا فقط
+                // distance اولیه از مختصات فعال را محاسبه می‌کنیم.)
                 details.push(d);
                 state.debugBuffer.push({
                     phase: "report",
@@ -210,6 +245,8 @@
                     loot: `${d.lootPercent}% (${d.lootCurrent}/${d.lootCap})`,
                     defender: d.defender.village,
                     villageId: d.defender.villageId,
+                    reportX: d.x,
+                    reportY: d.y,
                     isNatars: d.isNatars,
                     isOasis: d.isOasis,
                 });
@@ -237,10 +274,14 @@
                 appendLog(`  Village ${vid} → ${coordStr} dist=${distStr} tribe=${tribeStr}`);
                 details.forEach((d) => {
                     if (d.defender.villageId === vid) {
-                        d.x = info.x;
-                        d.y = info.y;
-                        d.distance = info.distance;
-                        d.tribe = info.tribe;
+                        // ⭐ 1.6.3 — مختصات/Distance گزارش (layer 1) نباید با null
+                        // نقشه از بین برود. نقشه اولویت دارد، ولی فقط اگر مقدار دارد.
+                        if (info.x != null && info.y != null) {
+                            d.x = info.x;
+                            d.y = info.y;
+                        }
+                        if (info.distance != null) d.distance = info.distance;
+                        if (info.tribe) d.tribe = info.tribe;
                         d.mapAlliance = info.alliance || ""; // ⭐ 1.6.2 — اتحاد دهکدهٔ هدف
                         if (info.name) d.defender.mapName = info.name;
                     }
@@ -254,6 +295,27 @@
         state.results = details;
         state.scanning = false;
         setButtonsEnabled(false);
+
+        // ⭐ 1.6.3 — layer 2: اگر /karte.php برای هدف Distance نداد ولی مختصات
+        // را داریم (از گزارش یا از نقشه)، Distance را با Math.hypot از روستای
+        // فعال حساب کن. برای oasis نقش حیاتی دارد چون map-fetch همیشه کامل نیست.
+        // d.x/d.y از قبل یا توسط layer 1 (گزارش) یا توسط map-fetch ست شده‌اند.
+        const origin = getActiveVillageCoords();
+        let derived = 0;
+        details.forEach((d) => {
+            if (d.distance == null && origin && d.x != null && d.y != null) {
+                const dist = fieldsBetween(origin.x, origin.y, d.x, d.y);
+                if (dist != null) {
+                    d.distance = dist;
+                    d.distanceSource = "calculated";
+                    derived++;
+                }
+            }
+        });
+        if (derived) {
+            const o = origin ? `(${origin.x}|${origin.y})` : "(?)";
+            appendLog(`Distance calculated for ${derived} report(s) from active village ${o}.`);
+        }
 
         // ⭐ 1.6.2 — available alliance/attacker lists + restore persisted selection
         rebuildFilterOptions(details);
@@ -309,11 +371,18 @@
             });
         }
 
-        // ── existing distance filter
+        // ── existing distance filter (⭐ 1.6.3: min + max bounds)
+        const minDist = state.minDistance || 0;
         result = result.filter((v) => {
-            if (maxDist === 0) return true;
-            if (v.distance == null) return false;
-            return v.distance <= maxDist;
+            if (maxDist > 0) {
+                if (v.distance == null) return false;
+                if (v.distance > maxDist) return false;
+            }
+            if (minDist > 0) {
+                if (v.distance == null) return false;
+                if (v.distance < minDist) return false;
+            }
+            return true;
         });
 
         result.sort((a, b) => (a.distance ?? 99999) - (b.distance ?? 99999));
@@ -357,6 +426,7 @@
                 exportedAt: new Date().toISOString(),
                 minLootPercent: state.filterPercent,
                 maxDistance: state.maxDistance === 0 ? null : state.maxDistance,
+                minDistance: state.minDistance === 0 ? null : state.minDistance,
                 totalScanned: state.results.length,
                 totalFiltered: aggregated.length,
                 normalCount: includeNormal ? normal.length : 0,
@@ -452,7 +522,8 @@
 
         if (items.length === 0) {
             const distInfo = state.maxDistance > 0 ? `, distance ≤ ${state.maxDistance}` : "";
-            listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo})</div>`;
+            const minDistInfo = state.minDistance > 0 ? `, distance ≥ ${state.minDistance}` : "";
+            listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo}${minDistInfo})</div>`;
             return;
         }
 

@@ -4,8 +4,11 @@
     async function _sharedFetchVillageInfo(villageId, cfg) {
         const cache = _sharedLoadCoordsCache(cfg.coordsCacheKey);
         const key = String(villageId);
+        // ⭐ 1.6.3 — گیت cache قبلاً به `tribe` هم وابسته بود. oasis بدون صاحب
+        // ردیف Tribe ندارد، پس ورودی‌اش هرگز cache نمی‌شد و هر اسکن دوباره
+        // fetch + iframe hang می‌کرد. حالا فقط دادهٔ لازم برای Distance/Coord شرط است.
         if (cache[key] && cache[key].x != null && cache[key].y != null
-            && cache[key].distance != null && cache[key].tribe
+            && cache[key].distance != null
             && "alliance" in cache[key]) {
             cfg.logger(`cache hit full ${villageId}`, cache[key]);
             return cache[key];
@@ -31,7 +34,7 @@
             cfg.logger(`fetch failed ${villageId}`, e.message);
         }
 
-        if (info.x != null && info.y != null && info.distance != null && info.tribe) {
+        if (info.x != null && info.y != null && info.distance != null) {
             cache[key] = info;
             _sharedSaveCoordsCache(cfg.coordsCacheKey, cache);
             return info;
@@ -84,7 +87,13 @@
                         const h1 = tileDetails.querySelector("h1.titleInHeader");
                         const h1Text = h1 ? _sharedStripBidi(h1.textContent) : "";
                         const looksLikeMap = /^map$/i.test(h1Text.trim());
-                        if (!looksLikeMap) {
+                        // ⭐ 1.6.3 — قبلاً فقط صفحهٔ «Map» رد می‌شد و روی oasis
+                        // (که h1 آن «Unoccupied oasis (−74|−72)» است) حلقه تا
+                        // iframeMaxAttempts می‌چرخید و null برمی‌گرداند.
+                        // حالا اگر h1 مختصات داشته باشد، صفحه آماده است.
+                        const hasCoords = !!tileDetails.querySelector(".coordinateX")
+                            && !!tileDetails.querySelector(".coordinateY");
+                        if (!looksLikeMap || hasCoords) {
                             const info = _sharedParseMapDetail(iDoc);
                             cfg.logger(`iframe parsed ${villageId}`, info);
                             finish(info);
@@ -137,10 +146,24 @@
             || doc;
 
         detailsRoot.querySelectorAll("tr").forEach((tr) => {
+            // ⭐ 1.6.3 — ردیف Distance روی /karte.php با <th> نیست:
+            //   <tr><td class="desc">Distance</td><td class="bold">4.47 fields</td></tr>
+            // نسخه‌های قبل فقط <th> را می‌خواندند، پس Distance برای oasis
+            // (و هر نقشه‌ای با این مارک‌آپ) همیشه null می‌ماند.
+            const cells = tr.querySelectorAll("th, td");
+            let label = "";
+            let td = null;
+            if (cells.length >= 2) {
+                label = _sharedStripBidi(cells[0].textContent).trim().toLowerCase();
+                td = cells[1];
+            }
             const th = tr.querySelector("th");
-            const td = tr.querySelector("td");
-            if (!th || !td) return;
-            const label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+            if (!td) {
+                if (!th) return;
+                td = tr.querySelector("td");
+                if (!td) return;
+                label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+            }
             const val = _sharedStripBidi(td.textContent).trim();
             if (label === "distance" && out.distance === null) {
                 const m = val.match(/([\d.]+)/);
@@ -158,10 +181,10 @@
 
         if (out.distance === null || !out.tribe || !out.alliance) {
             doc.querySelectorAll("tr").forEach((tr) => {
-                const th = tr.querySelector("th");
-                const td = tr.querySelector("td");
-                if (!th || !td) return;
-                const label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+                const cells = tr.querySelectorAll("th, td");
+                if (cells.length < 2) return;
+                const label = _sharedStripBidi(cells[0].textContent).trim().toLowerCase();
+                const td = cells[1];
                 const val = _sharedStripBidi(td.textContent).trim();
                 if (out.distance === null && /distance/i.test(label)) {
                     const m = val.match(/([\d.]+)/);

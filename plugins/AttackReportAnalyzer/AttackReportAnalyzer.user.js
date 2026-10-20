@@ -1,14 +1,14 @@
 // ═══════════════════════════════════════════════════════════
 // ⚠ AUTO-GENERATED FILE — DO NOT EDIT DIRECTLY
-// Generated: 2026-10-18T21:37:44.453Z
+// Generated: 2026-10-20T20:56:28.179Z
 // Source: src/ + ../../src/shared/
 // Rebuild: node build.js
 // ═══════════════════════════════════════════════════════════
 // ==UserScript==
-// @name         Nova Attack Report Analyzer - Alliance (V 1.6.2)
+// @name         Nova Attack Report Analyzer - Alliance (V 1.6.3)
 // @name:fa      نوا آنالایزر گزارش حملات اتحاد
 // @namespace    https://github.com/Logical-Developer/Nova-Attack-Report-Analyzer
-// @version      1.6.2
+// @version      1.6.3
 // @description  Analyze attack reports (alliance + own). Extract farm targets with loot %, distance, coordinates, tribe, target-village alliance. Separate Natars and Oases. Filter by alliance / attacker, sort columns. Export as farm-list-v1 (compatible with Farm Manager) or analytical JSON.
 // @description:fa  تحلیل گزارش‌های حمله (اتحاد و شخصی). استخراج فارم‌ها با درصد غارت، فاصله، مختصات، نژاد و اتحاد دهکده هدف. فیلتر بر اساس اتحاد/مهاجم، مرتب‌سازی ستون‌ها. خروجی farm-list-v1 (سازگار با Farm Manager) یا JSON تحلیلی.
 // @author       Nova
@@ -118,8 +118,11 @@ function _sharedSaveCoordsCache(key, c) {
     async function _sharedFetchVillageInfo(villageId, cfg) {
         const cache = _sharedLoadCoordsCache(cfg.coordsCacheKey);
         const key = String(villageId);
+        // ⭐ 1.6.3 — گیت cache قبلاً به `tribe` هم وابسته بود. oasis بدون صاحب
+        // ردیف Tribe ندارد، پس ورودی‌اش هرگز cache نمی‌شد و هر اسکن دوباره
+        // fetch + iframe hang می‌کرد. حالا فقط دادهٔ لازم برای Distance/Coord شرط است.
         if (cache[key] && cache[key].x != null && cache[key].y != null
-            && cache[key].distance != null && cache[key].tribe
+            && cache[key].distance != null
             && "alliance" in cache[key]) {
             cfg.logger(`cache hit full ${villageId}`, cache[key]);
             return cache[key];
@@ -145,7 +148,7 @@ function _sharedSaveCoordsCache(key, c) {
             cfg.logger(`fetch failed ${villageId}`, e.message);
         }
 
-        if (info.x != null && info.y != null && info.distance != null && info.tribe) {
+        if (info.x != null && info.y != null && info.distance != null) {
             cache[key] = info;
             _sharedSaveCoordsCache(cfg.coordsCacheKey, cache);
             return info;
@@ -198,7 +201,13 @@ function _sharedSaveCoordsCache(key, c) {
                         const h1 = tileDetails.querySelector("h1.titleInHeader");
                         const h1Text = h1 ? _sharedStripBidi(h1.textContent) : "";
                         const looksLikeMap = /^map$/i.test(h1Text.trim());
-                        if (!looksLikeMap) {
+                        // ⭐ 1.6.3 — قبلاً فقط صفحهٔ «Map» رد می‌شد و روی oasis
+                        // (که h1 آن «Unoccupied oasis (−74|−72)» است) حلقه تا
+                        // iframeMaxAttempts می‌چرخید و null برمی‌گرداند.
+                        // حالا اگر h1 مختصات داشته باشد، صفحه آماده است.
+                        const hasCoords = !!tileDetails.querySelector(".coordinateX")
+                            && !!tileDetails.querySelector(".coordinateY");
+                        if (!looksLikeMap || hasCoords) {
                             const info = _sharedParseMapDetail(iDoc);
                             cfg.logger(`iframe parsed ${villageId}`, info);
                             finish(info);
@@ -251,10 +260,24 @@ function _sharedSaveCoordsCache(key, c) {
             || doc;
 
         detailsRoot.querySelectorAll("tr").forEach((tr) => {
+            // ⭐ 1.6.3 — ردیف Distance روی /karte.php با <th> نیست:
+            //   <tr><td class="desc">Distance</td><td class="bold">4.47 fields</td></tr>
+            // نسخه‌های قبل فقط <th> را می‌خواندند، پس Distance برای oasis
+            // (و هر نقشه‌ای با این مارک‌آپ) همیشه null می‌ماند.
+            const cells = tr.querySelectorAll("th, td");
+            let label = "";
+            let td = null;
+            if (cells.length >= 2) {
+                label = _sharedStripBidi(cells[0].textContent).trim().toLowerCase();
+                td = cells[1];
+            }
             const th = tr.querySelector("th");
-            const td = tr.querySelector("td");
-            if (!th || !td) return;
-            const label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+            if (!td) {
+                if (!th) return;
+                td = tr.querySelector("td");
+                if (!td) return;
+                label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+            }
             const val = _sharedStripBidi(td.textContent).trim();
             if (label === "distance" && out.distance === null) {
                 const m = val.match(/([\d.]+)/);
@@ -272,10 +295,10 @@ function _sharedSaveCoordsCache(key, c) {
 
         if (out.distance === null || !out.tribe || !out.alliance) {
             doc.querySelectorAll("tr").forEach((tr) => {
-                const th = tr.querySelector("th");
-                const td = tr.querySelector("td");
-                if (!th || !td) return;
-                const label = _sharedStripBidi(th.textContent).trim().toLowerCase();
+                const cells = tr.querySelectorAll("th, td");
+                if (cells.length < 2) return;
+                const label = _sharedStripBidi(cells[0].textContent).trim().toLowerCase();
+                const td = cells[1];
                 const val = _sharedStripBidi(td.textContent).trim();
                 if (out.distance === null && /distance/i.test(label)) {
                     const m = val.match(/([\d.]+)/);
@@ -439,16 +462,48 @@ function _sharedSaveCoordsCache(key, c) {
             subject: "",
             date: "",
             attacker: { player: null, village: null, villageId: null, alliance: null },
-            defender: { player: null, village: null, villageId: null, alliance: null },
+            defender: { player: null, village: null, villageId: null, alliance: null, coordsKey: null },
             lootPercent: 0,
             lootCurrent: 0,
             lootCap: 0,
             isNatars: false,
             isOasis: false,
+            // ⭐ 1.6.3 — مختصات هدف مستقیم از خود صفحهٔ گزارش (layer 1 of the
+            // oasis fix). گزارش حمله به oasis مختصات را داخل خود <a class="village">
+            // مدافع دارد؛ این باعث می‌شود Distance حتی وقتی /karte.php در دسترس
+            // نیست یا آهسته است قابل محاسبه باشد.
+            x: null,
+            y: null,
         };
 
         const subjectEl = doc.querySelector(".headline .subject");
         if (subjectEl) out.subject = subjectEl.textContent.trim();
+
+        // ⭐ 1.6.3 — layer 1 (نسخهٔ واقعی): مختصات هدف در subject گزارش است،
+        // نه در .role.defender. نمونهٔ تأییدشده از private-doc:
+        //   <div class="subject">40 raids Unoccupied oasis &lrm;
+        //     <span class="coordinates coordinatesWrapper">
+        //       <span class="coordinateX">(&lrm;−&lrm;182&rlm;&rlm;</span>
+        //       <span class="coordinatePipe">|</span>
+        //       <span class="coordinateY">&lrm;−&lrm;79&rlm;&rlm;)</span>
+        //     </span>&rlm;</div>
+        // برای oasis در .role.defender فقط نام "40" آمده و مختصاتی نیست؛
+        // بنابراین بدون این خواندن، ستون Distance خالی می‌ماند.
+        const readCoords = (scope) => {
+            if (!scope) return null;
+            const cx = scope.querySelector(".coordinateX");
+            const cy = scope.querySelector(".coordinateY");
+            if (!cx || !cy) return null;
+            const x = _sharedParseCoord(cx.textContent);
+            const y = _sharedParseCoord(cy.textContent);
+            if (isNaN(x) || isNaN(y)) return null;
+            return { x, y };
+        };
+        const subjectCoords = readCoords(subjectEl) || readCoords(doc.querySelector(".headline"));
+        if (subjectCoords) {
+            out.x = subjectCoords.x;
+            out.y = subjectCoords.y;
+        }
 
         const timeEl = doc.querySelector(".header .time .text");
         if (timeEl) out.date = timeEl.textContent.trim();
@@ -486,6 +541,21 @@ function _sharedSaveCoordsCache(key, c) {
             out.defender.village = v ? _sharedStripBidi(v.textContent) : null;
             out.defender.villageId = v ? _sharedExtractVillageId(v.getAttribute("href")) : null;
             out.defender.alliance = a ? a.textContent.trim() : null;
+
+            // ⭐ 1.6.3 — layer 1b: اگر headline مختصات نداشت، داخل خود
+            // <a class="village"> مدافع را نگاه کن (بعضی گزارش‌ها این‌جا دارند).
+            const fromVillage = readCoords(v) || readCoords(def);
+            if (fromVillage && out.x == null) {
+                out.x = fromVillage.x;
+                out.y = fromVillage.y;
+            }
+
+            // ⭐ 1.6.3 — layer 3: کلید پایدار oasis برای fetch نقشه.
+            // یک oasis با <a class="village" href="/karte.php?d=111898"> آدرس دارد،
+            // ولی اگر روزی لینک فقط ?x=&y= باشد هم باید کار کند.
+            if (v && !out.defender.villageId && out.x != null && out.y != null) {
+                out.defender.coordsKey = `${out.x}:${out.y}`;
+            }
         }
 
         if (/raids\s+Natars/i.test(out.subject)) out.isNatars = true;
@@ -572,7 +642,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
     // CONFIG
     // ============================================================
     const CONFIG = {
-        version: "1.6.2",
+        version: "1.6.3",
         debug: true,
         delayBetweenReports: 300,
         delayBetweenVillages: 400,
@@ -949,6 +1019,15 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 </label>
             </div>
 
+            <div class="nova-section">
+                <label>
+                    <span>Min Distance:</span>
+                    <input type="range" id="nova-ara-a-min-dist-slider" min="0" max="200" step="1" value="0" style="flex:1;min-width:150px;">
+                    <span id="nova-ara-a-min-dist-slider-val" class="nova-val-badge">0</span>
+                    <span style="font-size:10px;color:${THEME.textMuted};font-weight:normal;">(0 = no limit, else ≥ N fields)</span>
+                </label>
+            </div>
+
             <div class="nova-section" id="nova-ally-filter-wrap">
                 <div class="nova-filter-title">🏰 Alliance Filter <span style="font-weight:normal;font-size:10px;color:${THEME.textMuted};">(target village alliance)</span></div>
                 <div id="nova-ally-filter-list" class="nova-filter-list">
@@ -1157,6 +1236,8 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         results: [],
         filterPercent: 0,
         maxDistance: 0,
+        // ⭐ 1.6.3 — حد پایین Distance (0 = بدون محدودیت)
+        minDistance: 0,
         activeTab: "normal",
         debugBuffer: [],
 
@@ -1310,6 +1391,36 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         } catch (e) {}
     }
 
+    // ⭐ 1.6.3 — مختصات روستای فعال (برای محاسبهٔ Distance وقتی /karte.php
+    // Distance را نمی‌دهد). منبع: #villageName[data-x][data-y] در layout،
+    // با fallback روی spان .coordinateX/.coordinateY در سرصفحه.
+    function getActiveVillageCoords() {
+        const vn = document.getElementById("villageName");
+        if (vn) {
+            const dx = parseInt(vn.getAttribute("data-x"), 10);
+            const dy = parseInt(vn.getAttribute("data-y"), 10);
+            if (!isNaN(dx) && !isNaN(dy)) return { x: dx, y: dy };
+        }
+        const box = document.querySelector("#sidebarBoxVillageList .listEntry.village.active .coordinatesWrapper")
+            || document.querySelector(".villageList .active .coordinatesWrapper");
+        if (box) {
+            const cx = box.querySelector(".coordinateX");
+            const cy = box.querySelector(".coordinateY");
+            if (cx && cy) {
+                const x = parseCoord(cx.textContent);
+                const y = parseCoord(cy.textContent);
+                if (!isNaN(x) && !isNaN(y)) return { x, y };
+            }
+        }
+        return null;
+    }
+
+    // فاصلهٔ اقلیدسی بین دو مختصات (Travian = فیلد)
+    function fieldsBetween(ax, ay, bx, by) {
+        if (ax == null || ay == null || bx == null || by == null) return null;
+        return Math.round(Math.hypot(ax - bx, ay - by));
+    }
+
     // ============================================================
     // MAIN SCAN
     // ============================================================
@@ -1353,6 +1464,9 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 }
                 d.alliance = r.alliance;
                 d.dateTxt = r.dateTxt;
+                // ⭐ 1.6.3 — layer 1: مختصات استخراج‌شده از خود صفحهٔ گزارش.
+                // (x/y در _sharedParseReportDetail ست می‌شوند؛ این‌جا فقط
+                // distance اولیه از مختصات فعال را محاسبه می‌کنیم.)
                 details.push(d);
                 state.debugBuffer.push({
                     phase: "report",
@@ -1361,6 +1475,8 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                     loot: `${d.lootPercent}% (${d.lootCurrent}/${d.lootCap})`,
                     defender: d.defender.village,
                     villageId: d.defender.villageId,
+                    reportX: d.x,
+                    reportY: d.y,
                     isNatars: d.isNatars,
                     isOasis: d.isOasis,
                 });
@@ -1388,10 +1504,14 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 appendLog(`  Village ${vid} → ${coordStr} dist=${distStr} tribe=${tribeStr}`);
                 details.forEach((d) => {
                     if (d.defender.villageId === vid) {
-                        d.x = info.x;
-                        d.y = info.y;
-                        d.distance = info.distance;
-                        d.tribe = info.tribe;
+                        // ⭐ 1.6.3 — مختصات/Distance گزارش (layer 1) نباید با null
+                        // نقشه از بین برود. نقشه اولویت دارد، ولی فقط اگر مقدار دارد.
+                        if (info.x != null && info.y != null) {
+                            d.x = info.x;
+                            d.y = info.y;
+                        }
+                        if (info.distance != null) d.distance = info.distance;
+                        if (info.tribe) d.tribe = info.tribe;
                         d.mapAlliance = info.alliance || ""; // ⭐ 1.6.2 — اتحاد دهکدهٔ هدف
                         if (info.name) d.defender.mapName = info.name;
                     }
@@ -1405,6 +1525,27 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         state.results = details;
         state.scanning = false;
         setButtonsEnabled(false);
+
+        // ⭐ 1.6.3 — layer 2: اگر /karte.php برای هدف Distance نداد ولی مختصات
+        // را داریم (از گزارش یا از نقشه)، Distance را با Math.hypot از روستای
+        // فعال حساب کن. برای oasis نقش حیاتی دارد چون map-fetch همیشه کامل نیست.
+        // d.x/d.y از قبل یا توسط layer 1 (گزارش) یا توسط map-fetch ست شده‌اند.
+        const origin = getActiveVillageCoords();
+        let derived = 0;
+        details.forEach((d) => {
+            if (d.distance == null && origin && d.x != null && d.y != null) {
+                const dist = fieldsBetween(origin.x, origin.y, d.x, d.y);
+                if (dist != null) {
+                    d.distance = dist;
+                    d.distanceSource = "calculated";
+                    derived++;
+                }
+            }
+        });
+        if (derived) {
+            const o = origin ? `(${origin.x}|${origin.y})` : "(?)";
+            appendLog(`Distance calculated for ${derived} report(s) from active village ${o}.`);
+        }
 
         // ⭐ 1.6.2 — available alliance/attacker lists + restore persisted selection
         rebuildFilterOptions(details);
@@ -1460,11 +1601,18 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
             });
         }
 
-        // ── existing distance filter
+        // ── existing distance filter (⭐ 1.6.3: min + max bounds)
+        const minDist = state.minDistance || 0;
         result = result.filter((v) => {
-            if (maxDist === 0) return true;
-            if (v.distance == null) return false;
-            return v.distance <= maxDist;
+            if (maxDist > 0) {
+                if (v.distance == null) return false;
+                if (v.distance > maxDist) return false;
+            }
+            if (minDist > 0) {
+                if (v.distance == null) return false;
+                if (v.distance < minDist) return false;
+            }
+            return true;
         });
 
         result.sort((a, b) => (a.distance ?? 99999) - (b.distance ?? 99999));
@@ -1508,6 +1656,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 exportedAt: new Date().toISOString(),
                 minLootPercent: state.filterPercent,
                 maxDistance: state.maxDistance === 0 ? null : state.maxDistance,
+                minDistance: state.minDistance === 0 ? null : state.minDistance,
                 totalScanned: state.results.length,
                 totalFiltered: aggregated.length,
                 normalCount: includeNormal ? normal.length : 0,
@@ -1603,7 +1752,8 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
 
         if (items.length === 0) {
             const distInfo = state.maxDistance > 0 ? `, distance ≤ ${state.maxDistance}` : "";
-            listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo})</div>`;
+            const minDistInfo = state.minDistance > 0 ? `, distance ≥ ${state.minDistance}` : "";
+            listEl.innerHTML = `<div class="nova-empty">No results (loot ≥ ${state.filterPercent}%${distInfo}${minDistInfo})</div>`;
             return;
         }
 
@@ -1810,6 +1960,30 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
         distSlider.addEventListener("input", () => {
             state.maxDistance = parseInt(distSlider.value, 10);
             distSliderVal.textContent = state.maxDistance === 0 ? "∞" : String(state.maxDistance);
+            // ⭐ 1.6.3 — Min نباید از Max عبور کند
+            if (state.minDistance > 0 && state.maxDistance > 0 && state.minDistance > state.maxDistance) {
+                state.minDistance = state.maxDistance;
+                const md = document.getElementById("nova-ara-a-min-dist-slider");
+                const mdv = document.getElementById("nova-ara-a-min-dist-slider-val");
+                if (md) md.value = String(state.minDistance);
+                if (mdv) mdv.textContent = String(state.minDistance);
+            }
+            renderList();
+            updateStats();
+        });
+
+        // ⭐ 1.6.3 — Min Distance slider (0 = no lower bound)
+        const minDistSlider = document.getElementById("nova-ara-a-min-dist-slider");
+        const minDistSliderVal = document.getElementById("nova-ara-a-min-dist-slider-val");
+        if (minDistSlider) minDistSlider.addEventListener("input", () => {
+            state.minDistance = parseInt(minDistSlider.value, 10) || 0;
+            minDistSliderVal.textContent = state.minDistance === 0 ? "∞" : String(state.minDistance);
+            // اگر Min از Max (با سقف set شده) بیشتر شد، Max را بالا ببر
+            if (state.maxDistance > 0 && state.minDistance > state.maxDistance) {
+                state.maxDistance = state.minDistance;
+                distSlider.value = String(state.maxDistance);
+                distSliderVal.textContent = String(state.maxDistance);
+            }
             renderList();
             updateStats();
         });
@@ -1933,6 +2107,7 @@ function _sharedBuildFarmListDocument(listName, troops, targets) {
                 reportCount: state.results.length,
                 filterPercent: state.filterPercent,
                 maxDistance: state.maxDistance,
+                minDistance: state.minDistance,
                 debugEntries: state.debugBuffer,
                 results: state.results,
             };

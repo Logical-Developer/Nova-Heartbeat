@@ -1,5 +1,73 @@
 # Changelog — Nova Attack Report Analyzer
 
+## [1.6.3] — 2026-10-18
+
+### Added
+
+- **Min Distance filter.** A second range slider (`0–200`, default `0` = no
+  lower bound) sits right below *Max Distance*. It is applied in
+  `getFilteredAggregated()` together with the existing upper bound, logged into
+  the export metadata as `meta.minDistance`, shown in the empty-state message,
+  and included in the debug snapshot (`minDistance`).
+  - The two sliders are cross-clamped in `05-bootstrap.js`: raising Min above a
+    non-zero Max pushes Max up, and lowering Max below a non-zero Min pulls Min
+    down. A value of `0` on either slider means "no bound on that side".
+- **Distance derivation layers** (see *Fixed* below). Every result may now carry
+  `distanceSource = "calculated"` when the distance had to be computed from
+  coordinates instead of being read from the map page.
+
+### Fixed
+
+- **Oasis rows always had an empty Distance column.** Three independent defects
+  were found and fixed:
+
+  1. **`Distance` row was skipped by the map parser.**
+     `src/shared/03-map.js` → `_sharedParseMapDetail()` only looked for a label
+     inside a `<th>` cell. The real map page emits this row as
+     `<tr><td class="desc">Distance</td><td class="bold">4.47 fields</td></tr>`
+     — no `<th>` at all — so the row never matched and `distance` stayed `null`
+     for every target. The parser now reads `<th>` **or** any two-cell
+     `(label, value)` row and keeps the `th`-based paths as a fallback.
+  2. **The coordinate cache could never store an unoccupied oasis.**
+     `_sharedFetchVillageInfo()` only wrote to the cache when
+     `info.tribe` was set, but an ownerless oasis has no `Tribe` row at all.
+     The entry was therefore re-fetched on every scan, and each attempt ran into
+     the iframe timeout. The cache gate and the write condition now only require
+     `x`, `y` and `distance`; `tribe` is optional.
+  3. **The iframe guard rejected the oasis page.**
+     `_sharedFetchVillageInfoViaIframe()` waited for an `<h1 class="titleInHeader">`
+     whose text was exactly `Map`. On an oasis the first `h1` is
+     `Unoccupied oasis (−74|−72)`, so the guard polled until
+     `iframeMaxAttempts` and returned `null`. The guard now also accepts the
+     page as soon as `#tileDetails` exposes `.coordinateX` / `.coordinateY`.
+- **Report page coordinates are now read as well** (`src/shared/04-report.js`).
+  `_sharedParseReportDetail()` returns `x` / `y`, taken from
+  `.headline .subject` (`.coordinateX` + `.coordinateY`) with a fallback to the
+  defender's `a.village`. For an oasis report the defender anchor only contains
+  a numeric label (`<a class="village" href="/karte.php?d=…">40</a>`) and no
+  coordinates, while the subject carries e.g.
+  `40 raids Unoccupied oasis (−182|−79)`. A stable `defender.coordsKey`
+  (`"x:y"`) is produced when a target has coordinates but no id.
+- **The map fetch no longer erases report-side data.** `03-scan.js` used to
+  assign `d.x = info.x`, `d.y = info.y`, `d.distance = info.distance`
+  unconditionally, which overwrote previously known values with `null` whenever
+  the map fetch failed. Each field is now only overwritten when the map actually
+  returned a value.
+- **Fallback distance.** When neither the report nor the map yields a distance
+  but coordinates are known, `runScan()` computes it with
+  `Math.round(Math.hypot(Δx, Δy))` from the currently active village
+  (`getActiveVillageCoords()` → `#villageName[data-x][data-y]`, falling back to
+  the active village entry's `.coordinateX` / `.coordinateY`).
+
+### Unchanged by design (zero regression)
+
+- `maxDistance` default stays `0` (no limit); the Min slider defaults to `0`
+  too, so an untouched UI behaves exactly like 1.6.2.
+- A `null` distance is still excluded only when a bound is actually active.
+- The default sort (distance ascending, `null` last) and the export ordering
+  (distance ascending) are untouched.
+- Cache keys are unchanged; no migration is needed.
+
 ## [1.6.2] — 2026-10-18
 
 ### Added

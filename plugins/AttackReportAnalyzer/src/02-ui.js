@@ -276,6 +276,15 @@
                 </label>
             </div>
 
+            <div class="nova-section">
+                <label>
+                    <span>Min Distance:</span>
+                    <input type="range" id="nova-ara-a-min-dist-slider" min="0" max="200" step="1" value="0" style="flex:1;min-width:150px;">
+                    <span id="nova-ara-a-min-dist-slider-val" class="nova-val-badge">0</span>
+                    <span style="font-size:10px;color:${THEME.textMuted};font-weight:normal;">(0 = no limit, else ≥ N fields)</span>
+                </label>
+            </div>
+
             <div class="nova-section" id="nova-ally-filter-wrap">
                 <div class="nova-filter-title">🏰 Alliance Filter <span style="font-weight:normal;font-size:10px;color:${THEME.textMuted};">(target village alliance)</span></div>
                 <div id="nova-ally-filter-list" class="nova-filter-list">

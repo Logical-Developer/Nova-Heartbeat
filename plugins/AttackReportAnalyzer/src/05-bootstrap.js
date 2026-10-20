@@ -51,6 +51,30 @@
         distSlider.addEventListener("input", () => {
             state.maxDistance = parseInt(distSlider.value, 10);
             distSliderVal.textContent = state.maxDistance === 0 ? "∞" : String(state.maxDistance);
+            // ⭐ 1.6.3 — Min نباید از Max عبور کند
+            if (state.minDistance > 0 && state.maxDistance > 0 && state.minDistance > state.maxDistance) {
+                state.minDistance = state.maxDistance;
+                const md = document.getElementById("nova-ara-a-min-dist-slider");
+                const mdv = document.getElementById("nova-ara-a-min-dist-slider-val");
+                if (md) md.value = String(state.minDistance);
+                if (mdv) mdv.textContent = String(state.minDistance);
+            }
+            renderList();
+            updateStats();
+        });
+
+        // ⭐ 1.6.3 — Min Distance slider (0 = no lower bound)
+        const minDistSlider = document.getElementById("nova-ara-a-min-dist-slider");
+        const minDistSliderVal = document.getElementById("nova-ara-a-min-dist-slider-val");
+        if (minDistSlider) minDistSlider.addEventListener("input", () => {
+            state.minDistance = parseInt(minDistSlider.value, 10) || 0;
+            minDistSliderVal.textContent = state.minDistance === 0 ? "∞" : String(state.minDistance);
+            // اگر Min از Max (با سقف set شده) بیشتر شد، Max را بالا ببر
+            if (state.maxDistance > 0 && state.minDistance > state.maxDistance) {
+                state.maxDistance = state.minDistance;
+                distSlider.value = String(state.maxDistance);
+                distSliderVal.textContent = String(state.maxDistance);
+            }
             renderList();
             updateStats();
         });
@@ -174,6 +198,7 @@
                 reportCount: state.results.length,
                 filterPercent: state.filterPercent,
                 maxDistance: state.maxDistance,
+                minDistance: state.minDistance,
                 debugEntries: state.debugBuffer,
                 results: state.results,
             };
