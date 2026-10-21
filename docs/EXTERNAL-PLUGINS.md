@@ -143,3 +143,9 @@ TC.patch(st => { st.plugins.MyPlugin.enabled = true; });
 It depends on this `window.TC` subset: `state`, `patch`, `enqueue`, `cancel`,
 `registerPlugin`, `readBuildingList`, `humanClick`, `village`, `villageLabel`,
 `fmtDuration`, `flash`, `log`, `sessionId`, `tests`.
+
+**Nova Farm List Manager** — `plugins/FarmListManager/` (modular source, built with
+its own `build.js`). Shows the full adapter pattern: `src/02-adapter.js` is the
+only file referencing `window.TC` (every call feature-detected), it works
+standalone when Nova is missing, keeps its own `localStorage` key, and exposes a
+debug tab (`?flm_debug=1`). See `plugins/FarmListManager/README.md`.
